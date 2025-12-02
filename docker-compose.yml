@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  nl2sql-service:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=prod
+      - VOLCANO_API_KEY=${VOLCANO_API_KEY}
+    volumes:
+      - ./logs:/app/logs
+      - ./annotations.json:/app/annotations.json
+      - ./session.txt:/app/session.txt
+    restart: unless-stopped
+    depends_on:
+      - mysql
+
+  mysql:
+    image: mysql:8.0
+    ports:
+      - "3306:3306"
+    environment:
+      - MYSQL_ROOT_PASSWORD=root
+      - MYSQL_DATABASE=nl2sql
+    volumes:
+      - mysql-data:/var/lib/mysql
+    restart: unless-stopped
+
+volumes:
+  mysql-data:

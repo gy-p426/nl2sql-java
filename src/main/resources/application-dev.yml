@@ -1,0 +1,22 @@
+spring:
+  profiles:
+    active: dev
+
+logging:
+  level:
+    root: INFO
+    com.nl2sql: DEBUG
+  file:
+    name: logs/nl2sql-dev.log
+
+nl2sql:
+  databases:
+    - name: db1
+      host: localhost
+      port: 3306
+      username: root
+      password: root
+      databases:
+        - yibin2
+        - yibinhumanresources
+        - yibinsalary

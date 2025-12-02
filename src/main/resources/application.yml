@@ -1,0 +1,75 @@
+spring:
+  application:
+    name: nl2sql-service
+  
+  jackson:
+    default-property-inclusion: non_null
+    serialization:
+      write-dates-as-timestamps: false
+    time-zone: GMT+8
+
+server:
+  port: 8080
+  servlet:
+    context-path: /api
+
+logging:
+  level:
+    root: INFO
+    com.nl2sql: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %logger{36} - %level - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} - %logger{36} - %level - %msg%n"
+  file:
+    name: logs/nl2sql.log
+
+nl2sql:
+  # 数据库配置
+  databases:
+    - name: db1
+      host: localhost
+      port: 3306
+      username: root
+      password: root
+      databases:
+        - yibin2
+        - yibinhumanresources
+        - yibinsalary
+      pool:
+        maximum-pool-size: 10
+        minimum-idle: 5
+        connection-timeout: 30000
+  
+  # 火山引擎配置
+  volcano-engine:
+    api-key: ${VOLCANO_API_KEY:7d7ec6e7-1f52-4deb-b881-7ea57442399f}
+    model: deepseek-v3-1-250821
+    timeout: 1800000
+    base-url: https://ark.cn-beijing.volces.com/api/v3
+  
+  # Ollama配置
+  ollama:
+    enabled: false
+    host: http://localhost:11435
+    model: deepseek-r1:14b
+    timeout: 1800000
+  
+  # 模型提供商选择
+  model:
+    provider: volcano_engine  # volcano_engine 或 ollama
+  
+  # 系统设置
+  settings:
+    refresh-db: true
+    refresh-schema: true
+    save-results: false
+    max-retries: 5
+    cache-max-size: 1000
+    cache-expire-minutes: 60
+  
+  # 文件路径
+  files:
+    annotation: annotations.json
+    session: session.txt
+    db-overview: db.txt
+    schema-dir: .
