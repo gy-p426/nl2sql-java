@@ -92,7 +92,7 @@ public class DatabaseService {
     /**
      * 从SQL中检测数据库名
      */
-    private String detectDatabaseFromSql(String sql) {
+    public String detectDatabaseFromSql(String sql) {
         List<String> allDatabases = getAllDatabases();
         
         for (String dbName : allDatabases) {

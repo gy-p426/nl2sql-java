@@ -191,7 +191,7 @@ public class AnnotationService {
      * 加载注释
      */
     @SuppressWarnings("unchecked")
-    private void loadAnnotations() {
+    public void loadAnnotations() {
         try {
             String annotationFile = properties.getFiles().getAnnotation();
             File file = new File(annotationFile);
