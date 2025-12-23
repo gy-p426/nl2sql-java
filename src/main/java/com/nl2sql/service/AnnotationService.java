@@ -1,18 +1,15 @@
 package com.nl2sql.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nl2sql.config.NL2SQLProperties;
+import com.nl2sql.model.entity.CustomAnnotation;
+import com.nl2sql.repository.CustomAnnotationRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.io.File;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
-import java.time.LocalDateTime;
 import java.util.*;
 
 /**
@@ -24,10 +21,7 @@ import java.util.*;
 public class AnnotationService {
 
     private final DatabaseService databaseService;
-    private final NL2SQLProperties properties;
-    private final ObjectMapper objectMapper;
-    
-    private Map<String, Object> annotations = new HashMap<>();
+    private final CustomAnnotationRepository annotationRepository;
 
     /**
      * 获取数据库 Schema（包含自定义注释）
@@ -119,58 +113,55 @@ public class AnnotationService {
     /**
      * 获取自定义注释
      */
-    @SuppressWarnings("unchecked")
-    private String getCustomAnnotation(String dbName, String tableName, String columnName) {
-        loadAnnotations();
-        
-        if (!annotations.containsKey(dbName)) {
+    public String getCustomAnnotation(String dbName, String tableName, String columnName) {
+        try {
+            Optional<CustomAnnotation> annotation;
+            
+            if (columnName == null) {
+                // 查找表注释
+                annotation = annotationRepository.findByDatabaseNameAndTableNameAndColumnNameIsNull(
+                    dbName, tableName);
+            } else {
+                // 查找列注释
+                annotation = annotationRepository.findByDatabaseNameAndTableNameAndColumnName(
+                    dbName, tableName, columnName);
+            }
+            
+            return annotation.map(CustomAnnotation::getCustomComment).orElse("");
+        } catch (Exception e) {
+            log.error("❌ 获取自定义注释错误: {}", e.getMessage());
             return "";
-        }
-        
-        Map<String, Object> dbAnnotations = (Map<String, Object>) annotations.get(dbName);
-        if (!dbAnnotations.containsKey(tableName)) {
-            return "";
-        }
-        
-        Map<String, Object> tableData = (Map<String, Object>) dbAnnotations.get(tableName);
-        
-        if (columnName == null) {
-            return (String) tableData.getOrDefault("table_comment", "");
-        } else {
-            Map<String, String> columns = (Map<String, String>) tableData.get("columns");
-            return columns != null ? columns.getOrDefault(columnName, "") : "";
         }
     }
 
     /**
      * 更新注释
      */
-    @SuppressWarnings("unchecked")
+    @Transactional
     public Map<String, Object> updateAnnotation(
             String dbName, String tableName, String columnName, String comment) {
         
         try {
-            loadAnnotations();
-            
-            annotations.putIfAbsent(dbName, new HashMap<>());
-            Map<String, Object> dbAnnotations = (Map<String, Object>) annotations.get(dbName);
-            
-            dbAnnotations.putIfAbsent(tableName, new HashMap<>());
-            Map<String, Object> tableData = (Map<String, Object>) dbAnnotations.get(tableName);
+            CustomAnnotation annotation;
             
             if (columnName == null) {
-                tableData.put("table_comment", comment);
+                // 更新表注释
+                annotation = annotationRepository.findByDatabaseNameAndTableNameAndColumnNameIsNull(
+                    dbName, tableName).orElse(new CustomAnnotation());
                 log.info("✏️ 更新表注释: {}.{}", dbName, tableName);
             } else {
-                tableData.putIfAbsent("columns", new HashMap<>());
-                Map<String, String> columns = (Map<String, String>) tableData.get("columns");
-                columns.put(columnName, comment);
+                // 更新列注释
+                annotation = annotationRepository.findByDatabaseNameAndTableNameAndColumnName(
+                    dbName, tableName, columnName).orElse(new CustomAnnotation());
                 log.info("✏️ 更新列注释: {}.{}.{}", dbName, tableName, columnName);
             }
             
-            tableData.put("updated_at", LocalDateTime.now().toString());
+            annotation.setDatabaseName(dbName);
+            annotation.setTableName(tableName);
+            annotation.setColumnName(columnName);
+            annotation.setCustomComment(comment);
             
-            saveAnnotations();
+            annotationRepository.save(annotation);
             
             return Map.of(
                 "success", true,
@@ -188,40 +179,10 @@ public class AnnotationService {
     }
 
     /**
-     * 加载注释
+     * 加载注释（已废弃，保留用于兼容）
      */
-    @SuppressWarnings("unchecked")
+    @Deprecated
     public void loadAnnotations() {
-        try {
-            String annotationFile = properties.getFiles().getAnnotation();
-            File file = new File(annotationFile);
-            
-            if (file.exists()) {
-                String content = Files.readString(Paths.get(annotationFile));
-                annotations = objectMapper.readValue(content, Map.class);
-                log.debug("📂 加载注释文件: {}", annotationFile);
-            } else {
-                annotations = new HashMap<>();
-                log.debug("📝 创建新的注释文件");
-            }
-        } catch (Exception e) {
-            log.error("❌ 加载注释文件错误: {}", e.getMessage());
-            annotations = new HashMap<>();
-        }
-    }
-
-    /**
-     * 保存注释
-     */
-    private void saveAnnotations() {
-        try {
-            String annotationFile = properties.getFiles().getAnnotation();
-            String json = objectMapper.writerWithDefaultPrettyPrinter()
-                .writeValueAsString(annotations);
-            Files.writeString(Paths.get(annotationFile), json);
-            log.info("💾 保存注释文件成功");
-        } catch (Exception e) {
-            log.error("❌ 保存注释文件错误: {}", e.getMessage());
-        }
+        log.debug("📂 注释已从数据库加载，无需文件操作");
     }
 }

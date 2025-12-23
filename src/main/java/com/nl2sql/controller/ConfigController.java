@@ -24,7 +24,6 @@ import java.util.Map;
 @Tag(name = "配置管理", description = "系统配置相关接口")
 public class ConfigController {
 
-    private final NL2SQLProperties properties;
     private final DatabaseService databaseService;
     private final ConfigService configService;
 
@@ -34,27 +33,20 @@ public class ConfigController {
         try {
             Map<String, Object> config = new HashMap<>();
             
-            // 数据库配置（隐藏敏感信息）
-            List<Map<String, Object>> databases = properties.getDatabases().stream()
-                .map(db -> {
-                    Map<String, Object> dbInfo = new HashMap<>();
-                    dbInfo.put("name", db.getName());
-                    dbInfo.put("host", db.getHost());
-                    dbInfo.put("port", db.getPort());
-                    dbInfo.put("databases", db.getDatabases());
-                    return dbInfo;
-                })
-                .toList();
-            config.put("databases", databases);
+            // 数据库配置
+            config.put("databases", configService.getDatabaseHosts());
             
-            // 模型配置（隐藏 API Key）
-            Map<String, Object> modelConfig = new HashMap<>();
-            modelConfig.put("provider", properties.getModel().getProvider());
-            modelConfig.put("model", properties.getVolcanoEngine().getModel());
-            config.put("model", modelConfig);
+            // 火山引擎配置
+            config.put("volcano_engine", configService.getVolcanoEngineConfig());
+            
+            // Ollama配置
+            config.put("ollama", configService.getOllamaConfig());
+            
+            // 模型提供商
+            config.put("model_provider", configService.getModelProvider());
             
             // 系统设置
-            config.put("settings", properties.getSettings());
+            config.put("settings", configService.getSettings());
             
             return ApiResponse.success(config);
         } catch (Exception e) {

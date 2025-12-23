@@ -2,6 +2,7 @@ package com.nl2sql.util;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -11,6 +12,7 @@ import java.util.regex.Pattern;
  * JSON 解析工具
  */
 @Slf4j
+@Component
 public class JsonParser {
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
@@ -18,7 +20,7 @@ public class JsonParser {
     /**
      * 从响应文本中提取 JSON
      */
-    public static Map<String, Object> extractJsonFromResponse(String text) {
+    public Map<String, Object> extractJsonFromResponse(String text) {
         if (text == null || text.trim().isEmpty()) {
             return null;
         }
@@ -59,7 +61,7 @@ public class JsonParser {
      * 回退提取方法
      */
     @SuppressWarnings("unchecked")
-    private static Map<String, Object> fallbackExtraction(String text) {
+    private Map<String, Object> fallbackExtraction(String text) {
         String[] patterns = {
             "\\{\\s*\"keywords_cn\".*?\\}",
             "\\{[\\s\\S]*?\\}",

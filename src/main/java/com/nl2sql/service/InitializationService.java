@@ -1,14 +1,16 @@
 package com.nl2sql.service;
 
 import com.nl2sql.config.NL2SQLProperties;
+import com.nl2sql.model.entity.DatabaseOverview;
+import com.nl2sql.model.entity.DatabaseSchema;
+import com.nl2sql.repository.DatabaseOverviewRepository;
+import com.nl2sql.repository.DatabaseSchemaRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.List;
 
 /**
@@ -22,12 +24,18 @@ public class InitializationService implements CommandLineRunner {
     private final DatabaseService databaseService;
     private final SchemaService schemaService;
     private final NL2SQLProperties properties;
+    private final DatabaseOverviewRepository overviewRepository;
+    private final DatabaseSchemaRepository schemaRepository;
+    private final DataMigrationService dataMigrationService;
 
     @Override
     public void run(String... args) {
         log.info("🚀 开始初始化 NL2SQL 服务...");
         
         try {
+            // 0. 数据迁移（首次启动时从文件导入数据）
+            dataMigrationService.migrateAllData();
+            
             // 1. 检查数据库连接
             checkDatabaseConnections();
             
@@ -80,46 +88,50 @@ public class InitializationService implements CommandLineRunner {
     /**
      * 生成数据库概览
      */
+    @Transactional
     private void generateDatabaseOverview() {
         log.info("📋 生成数据库概览...");
         
-        String dbOverviewFile = properties.getFiles().getDbOverview();
-        
         try {
-            StringBuilder overview = new StringBuilder();
             List<String> databases = databaseService.getAllDatabases();
             
             for (String dbName : databases) {
-                String schemaFile = properties.getFiles().getSchemaDir() + "/" + dbName + ".txt";
+                // 从数据库读取Schema信息
+                List<DatabaseSchema> schemas = schemaRepository.findByDatabaseName(dbName);
                 
-                if (Files.exists(Paths.get(schemaFile))) {
-                    List<String> lines = Files.readAllLines(Paths.get(schemaFile));
+                if (!schemas.isEmpty()) {
+                    StringBuilder tableSummary = new StringBuilder();
                     
-                    StringBuilder tables = new StringBuilder();
-                    for (String line : lines) {
-                        if (line.trim().isEmpty()) continue;
-                        
-                        String[] parts = line.split("\\|\\|");
-                        if (parts.length >= 2) {
-                            String tableName = parts[0].split("\\.")[1]; // 去掉数据库前缀
-                            String tableComment = parts[1];
-                            tables.append(String.format("%s(%s), ", tableName, tableComment));
-                        }
+                    for (DatabaseSchema schema : schemas) {
+                        String tableName = schema.getTableName();
+                        String tableComment = schema.getTableComment() != null ? schema.getTableComment() : "无注释";
+                        tableSummary.append(String.format("%s(%s), ", tableName, tableComment));
                     }
                     
-                    if (tables.length() > 0) {
-                        tables.setLength(tables.length() - 2); // 移除最后的逗号和空格
+                    if (tableSummary.length() > 0) {
+                        tableSummary.setLength(tableSummary.length() - 2); // 移除最后的逗号和空格
                     }
                     
-                    overview.append(String.format("数据库名：%s。表名表注释：%s。\n", dbName, tables.toString()));
+                    // 保存或更新数据库概览
+                    DatabaseOverview overview = overviewRepository.findByDatabaseName(dbName)
+                        .orElse(new DatabaseOverview());
+                    
+                    overview.setDatabaseName(dbName);
+                    overview.setDescription(String.format("数据库名：%s", dbName));
+                    overview.setTableSummary(tableSummary.toString());
+                    overview.setTableCount(schemas.size());
+                    overview.setIsActive(true);
+                    
+                    overviewRepository.save(overview);
+                    
+                    log.info("✅ 数据库 {} 概览已保存，共 {} 个表", dbName, schemas.size());
                 }
             }
             
-            Files.writeString(Paths.get(dbOverviewFile), overview.toString());
-            log.info("✅ 数据库概览已保存到: {}", dbOverviewFile);
+            log.info("✅ 数据库概览生成完成");
             
-        } catch (IOException e) {
-            log.error("❌ 生成数据库概览失败: {}", e.getMessage());
+        } catch (Exception e) {
+            log.error("❌ 生成数据库概览失败: {}", e.getMessage(), e);
         }
     }
 }

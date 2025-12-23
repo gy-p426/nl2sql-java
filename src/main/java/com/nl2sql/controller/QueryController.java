@@ -4,6 +4,7 @@ import com.nl2sql.model.dto.ApiResponse;
 import com.nl2sql.model.dto.QueryRequest;
 import com.nl2sql.model.dto.QueryResponse;
 import com.nl2sql.service.NL2SQLService;
+import com.nl2sql.service.StreamingService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
@@ -27,6 +28,7 @@ import java.util.concurrent.Executors;
 public class QueryController {
 
     private final NL2SQLService nl2sqlService;
+    private final StreamingService streamingService;
     private final ExecutorService executorService = Executors.newCachedThreadPool();
 
     @PostMapping
@@ -49,46 +51,21 @@ public class QueryController {
         }
     }
 
-    @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    @PostMapping(value = "/query-stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     @Operation(summary = "处理自然语言查询（流式返回）")
     public SseEmitter queryStream(@Valid @RequestBody QueryRequest request) {
         SseEmitter emitter = new SseEmitter(300000L); // 5分钟超时
         
         executorService.execute(() -> {
-            try {
-                log.info("📝 收到流式查询请求 - 窗口: {}, 问题: {}", 
-                    request.getWindowId(), request.getQuestion());
-                
-                // 发送开始事件
-                emitter.send(SseEmitter.event()
-                    .name("progress")
-                    .data("{\"step\":\"start\",\"status\":\"processing\",\"message\":\"开始处理查询\"}"));
-                
-                // 处理查询
-                QueryResponse response = nl2sqlService.processQuery(
-                    request.getQuestion(),
-                    request.getWindowId(),
-                    request.getSessionId()
-                );
-                
-                // 发送完成事件
-                emitter.send(SseEmitter.event()
-                    .name("result")
-                    .data(response));
-                
-                emitter.complete();
-                
-            } catch (Exception e) {
-                log.error("❌ 流式查询处理错误: {}", e.getMessage(), e);
-                try {
-                    emitter.send(SseEmitter.event()
-                        .name("error")
-                        .data("{\"error\":\"" + e.getMessage() + "\"}"));
-                } catch (Exception ex) {
-                    log.error("发送错误事件失败", ex);
-                }
-                emitter.completeWithError(e);
-            }
+            log.info("🌊 收到流式查询请求 - 窗口: {}, 问题: {}", 
+                request.getWindowId(), request.getQuestion());
+            
+            streamingService.processQueryStream(
+                request.getQuestion(),
+                request.getWindowId(),
+                request.getSessionId(),
+                emitter
+            );
         });
         
         return emitter;

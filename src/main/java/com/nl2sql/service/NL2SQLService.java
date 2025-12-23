@@ -1,12 +1,17 @@
 package com.nl2sql.service;
 
+import com.nl2sql.client.OllamaClient;
 import com.nl2sql.client.VolcanoEngineClient;
 import com.nl2sql.model.dto.QueryResponse;
+import com.nl2sql.model.entity.DatabaseOverview;
+import com.nl2sql.repository.DatabaseOverviewRepository;
+import com.nl2sql.util.JsonParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * NL2SQL 核心服务
@@ -17,12 +22,16 @@ import java.util.*;
 public class NL2SQLService {
 
     private final VolcanoEngineClient volcanoEngineClient;
+    private final OllamaClient ollamaClient;
     private final DatabaseService databaseService;
     private final SessionService sessionService;
     private final KeywordExtractorService keywordExtractorService;
     private final SchemaService schemaService;
     private final SQLGeneratorService sqlGeneratorService;
     private final CacheService cacheService;
+    private final DatabaseOverviewRepository databaseOverviewRepository;
+    private final JsonParser jsonParser;
+    private final DynamicConfigProvider configProvider;
 
     /**
      * 处理查询
@@ -57,7 +66,7 @@ public class NL2SQLService {
             // 5. 选择候选表
             log.info("🔍 步骤5: 选择候选表");
             List<String> candidateTables = schemaService.selectCandidateTables(
-                databaseKeywords, selectedDatabases, 20
+                databaseKeywords, selectedDatabases, 10
             );
             
             if (candidateTables.isEmpty()) {
@@ -174,7 +183,7 @@ public class NL2SQLService {
         
         // 解析 JSON 响应
         String rawResponse = (String) response.get("response");
-        Map<String, Object> parsed = com.nl2sql.util.JsonParser.extractJsonFromResponse(rawResponse);
+        Map<String, Object> parsed = jsonParser.extractJsonFromResponse(rawResponse);
         
         if (parsed != null && parsed.containsKey("is_continuous")) {
             boolean isContinuous = (Boolean) parsed.getOrDefault("is_continuous", false);
@@ -209,11 +218,105 @@ public class NL2SQLService {
      * 选择数据库
      */
     private List<String> selectDatabases(String question) {
-        // TODO: 实现数据库选择逻辑
-        // 当前简化版：返回所有数据库
-        List<String> allDatabases = databaseService.getAllDatabases();
-        log.info("📊 选择数据库（简化版）: {}", allDatabases);
-        return allDatabases;
+        try {
+            // 1. 获取所有激活的数据库概览
+            List<DatabaseOverview> overviews = databaseOverviewRepository.findByIsActiveTrue();
+            
+            if (overviews.isEmpty()) {
+                log.warn("⚠️ 没有可用的数据库概览，返回所有数据库");
+                return databaseService.getAllDatabases();
+            }
+            
+            // 2. 构建数据库选择提示词
+            String prompt = buildDatabaseSelectionPrompt(question, overviews);
+            
+            // 3. 调用AI模型
+            Map<String, Object> response = volcanoEngineClient.generate(prompt, 0.1);
+            
+            // 4. 解析响应
+            String content = (String) response.get("content");
+            if (content == null || content.trim().isEmpty()) {
+                log.warn("⚠️ AI未返回有效响应，使用所有数据库");
+                return databaseService.getAllDatabases();
+            }
+            
+            // 5. 提取数据库列表
+            Map<String, Object> parsed = jsonParser.extractJsonFromResponse(content);
+            @SuppressWarnings("unchecked")
+            List<String> selectedDatabases = (List<String>) parsed.get("databases");
+            
+            if (selectedDatabases == null || selectedDatabases.isEmpty()) {
+                log.warn("⚠️ AI未返回有效的数据库列表，使用所有数据库");
+                return databaseService.getAllDatabases();
+            }
+            
+            // 6. 验证数据库是否存在
+            List<String> allDatabases = databaseService.getAllDatabases();
+            selectedDatabases = selectedDatabases.stream()
+                .filter(allDatabases::contains)
+                .collect(Collectors.toList());
+            
+            if (selectedDatabases.isEmpty()) {
+                log.warn("⚠️ 选择的数据库都不存在，使用所有数据库");
+                return allDatabases;
+            }
+            
+            log.info("✅ 智能选择数据库: {}", selectedDatabases);
+            return selectedDatabases;
+            
+        } catch (Exception e) {
+            log.error("❌ 数据库选择失败: {}", e.getMessage());
+            return databaseService.getAllDatabases();
+        }
+    }
+    
+    /**
+     * 构建数据库选择提示词
+     * 该方法用于生成一个结构化的提示词，帮助AI系统根据用户问题选择最相关的数据库
+     *
+     * @param question 用户提出的业务问题
+     * @param overviews 可用数据库的概览信息列表
+     * @return 返回格式化的提示词字符串，包含用户问题、数据库选项和输出要求
+     */
+    private String buildDatabaseSelectionPrompt(String question, List<DatabaseOverview> overviews) {
+        // 使用StringBuilder高效构建提示词字符串
+        StringBuilder prompt = new StringBuilder();
+        // 添加系统角色说明
+        prompt.append("你是一个数据库选择专家。根据用户问题，从以下数据库中选择最相关的一个或多个个数据库。\n\n");
+        // 添加用户问题部分标题
+        prompt.append("【用户问题】\n");
+        // 添加实际的用户问题内容
+        prompt.append(question).append("\n\n");
+        // 添加可用数据库部分标题
+        prompt.append("【可用数据库】\n");
+        
+        // 遍历所有数据库概览信息，构建数据库选项列表
+        for (DatabaseOverview overview : overviews) {
+            // 添加数据库名称
+            prompt.append("- ").append(overview.getDatabaseName());
+            // 如果数据库有描述信息，则添加描述
+            if (overview.getDescription() != null && !overview.getDescription().isEmpty()) {
+                prompt.append(": ").append(overview.getDescription());
+            }
+            // 换行
+            prompt.append("\n");
+            
+            // 如果数据库有表摘要信息，则添加表摘要
+            if (overview.getTableSummary() != null && !overview.getTableSummary().isEmpty()) {
+                prompt.append("  表摘要: ").append(overview.getTableSummary()).append("\n");
+            }
+        }
+
+        prompt.append("\n【要求】\n");
+        prompt.append("1. 仔细分析用户问题涉及的业务领域\n");
+        prompt.append("2. 根据每个数据库的表名和表注释判断哪些数据库包含相关数据\n");
+        prompt.append("3. 如果问题涉及多个业务领域，可以选择多个数据库\n");
+        prompt.append("4. 如果不确定，优先选择最可能相关的数据库\n\n");
+        prompt.append("【输出格式】\n");
+        prompt.append("请以JSON格式返回，格式如下：\n");
+        prompt.append("{\"databases\": [\"数据库1\", \"数据库2\"]}\n");
+        
+        return prompt.toString();
     }
 
     private String buildContinuousQuestionPrompt(String previous, String current) {

@@ -1,14 +1,16 @@
 package com.nl2sql.service;
 
 import com.nl2sql.client.VolcanoEngineClient;
-import com.nl2sql.config.NL2SQLProperties;
+import com.nl2sql.model.entity.TrainingData;
+import com.nl2sql.repository.TrainingDataRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -25,7 +27,8 @@ import java.util.stream.Collectors;
 public class SQLGeneratorService {
 
     private final VolcanoEngineClient volcanoEngineClient;
-    private final NL2SQLProperties properties;
+    private final TrainingDataRepository trainingDataRepository;
+    private final DatabaseService databaseService;
 
     /**
      * 生成 SQL
@@ -324,6 +327,120 @@ public class SQLGeneratorService {
     }
 
     /**
+     * 执行SQL（增强版，带LIMIT）- 完全按照Python实现
+     */
+    public Map<String, Object> executeSQLEnhanced(String sql, int limit) {
+        long startTime = System.currentTimeMillis();
+        Map<String, Object> result = new HashMap<>();
+
+        try {
+            // 1. 添加LIMIT限制
+            String originalSql = sql;
+            if (!sql.toUpperCase().contains("LIMIT")) {
+                sql = sql.replaceAll(";\\s*$", "") + " LIMIT " + limit;
+                log.debug("🔧 添加LIMIT限制: {}", limit);
+            }
+
+            // 2. 检测涉及的数据库
+            List<String> databases = detectDatabasesInSql(sql);
+            log.debug("🎯 检测到数据库: {}", databases);
+
+            if (databases.isEmpty()) {
+                log.warn("⚠️ 未检测到数据库，SQL执行失败");
+                result.put("results", new ArrayList<>());
+                result.put("execution_time", (System.currentTimeMillis() - startTime) / 1000.0);
+                result.put("success", false);
+                result.put("error", "未检测到数据库");
+                return result;
+            }
+
+            // 3. 使用第一个数据库的连接执行SQL
+            String dbName = databases.get(0);
+            log.info("💾 使用数据库 {} 执行SQL", dbName);
+
+            try (Connection conn = databaseService.getConnection(dbName);
+                 Statement stmt = conn.createStatement()) {
+
+                log.debug("📝 执行SQL: {}", sql);
+
+                try (ResultSet rs = stmt.executeQuery(sql)) {
+                    ResultSetMetaData metaData = rs.getMetaData();
+                    int columnCount = metaData.getColumnCount();
+
+                    List<Map<String, Object>> results = new ArrayList<>();
+
+                    while (rs.next()) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        for (int i = 1; i <= columnCount; i++) {
+                            String columnName = metaData.getColumnLabel(i);
+                            Object value = rs.getObject(i);
+
+                            // 转换为JSON可序列化格式
+                            if (value == null) {
+                                row.put(columnName, null);
+                            } else if (value instanceof Number || value instanceof String || value instanceof Boolean) {
+                                row.put(columnName, value);
+                            } else {
+                                row.put(columnName, value.toString());
+                            }
+                        }
+                        results.add(row);
+                    }
+
+                    double executionTime = (System.currentTimeMillis() - startTime) / 1000.0;
+
+                    log.info("📊 查询返回 {} 行数据", results.size());
+                    log.info("✅ SQL执行完成 - 数据库: {}, 耗时: {:.3f}秒, 返回: {}行",
+                            dbName, executionTime, results.size());
+
+                    result.put("results", results);
+                    result.put("execution_time", executionTime);
+                    result.put("success", true);
+                    result.put("database", dbName);
+
+                    return result;
+                }
+            }
+
+        } catch (Exception e) {
+            double executionTime = (System.currentTimeMillis() - startTime) / 1000.0;
+            log.error("❌ SQL执行错误: {}, 耗时: {:.3f}秒", e.getMessage(), executionTime);
+            log.debug("💥 出错的SQL: {}", sql);
+
+            result.put("results", new ArrayList<>());
+            result.put("execution_time", executionTime);
+            result.put("success", false);
+            result.put("error", e.getMessage());
+
+            return result;
+        }
+    }
+
+    /**
+     * 检测SQL中涉及的数据库 - 完全按照Python实现
+     */
+    private List<String> detectDatabasesInSql(String sql) {
+        List<String> databases = new ArrayList<>();
+
+        // 查找形如 database.table 的模式
+        Pattern pattern = Pattern.compile("\\b([a-zA-Z_][a-zA-Z0-9_]*)\\.[a-zA-Z_][a-zA-Z0-9_]*");
+        Matcher matcher = pattern.matcher(sql);
+
+        List<String> availableDbs = databaseService.getAllDatabases();
+
+        while (matcher.find()) {
+            String match = matcher.group(1);
+            // 只有当匹配到的名称在已知数据库列表中时才认为是数据库名
+            if (availableDbs.contains(match) && !databases.contains(match)) {
+                databases.add(match);
+            }
+        }
+
+        return databases;
+    }
+
+
+    /**
      * 检索相关训练数据
      */
     private List<TrainingPair> retrieveRelevantTrainingData(
@@ -331,33 +448,24 @@ public class SQLGeneratorService {
             Map<String, List<String>> keywords,
             int topN) {
         
-        String trainFile = properties.getFiles().getSchemaDir() + "/train-m.txt";
-        
-        if (!Files.exists(Paths.get(trainFile))) {
-            log.debug("训练文件不存在，跳过历史数据检索");
-            return Collections.emptyList();
-        }
-        
         try {
-            String content = Files.readString(Paths.get(trainFile));
+            // 从数据库读取所有训练数据
+            List<TrainingData> trainingDataList = trainingDataRepository.findAll();
             
-            Pattern pattern = Pattern.compile("问题：(.*?)\\nSQL：(.*?)(?=\\n\\n|$)", Pattern.DOTALL);
-            Matcher matcher = pattern.matcher(content);
-            
-            List<TrainingPair> pairs = new ArrayList<>();
-            while (matcher.find()) {
-                pairs.add(new TrainingPair(matcher.group(1).trim(), matcher.group(2).trim()));
-            }
-            
-            if (pairs.isEmpty()) {
-                log.debug("训练文件中未找到问题-SQL对");
+            if (trainingDataList.isEmpty()) {
+                log.debug("数据库中没有训练数据");
                 return Collections.emptyList();
             }
+            
+            // 转换为TrainingPair
+            List<TrainingPair> pairs = trainingDataList.stream()
+                .map(td -> new TrainingPair(td.getQuestion(), td.getSql()))
+                .collect(Collectors.toList());
             
             // 基础相似度检索
             return basicSimilarityRetrieval(question, keywords, pairs, topN);
             
-        } catch (IOException e) {
+        } catch (Exception e) {
             log.error("❌ 检索历史数据时发生错误: {}", e.getMessage());
             return Collections.emptyList();
         }
