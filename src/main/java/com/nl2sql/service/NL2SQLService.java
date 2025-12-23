@@ -234,7 +234,7 @@ public class NL2SQLService {
             Map<String, Object> response = volcanoEngineClient.generate(prompt, 0.1);
             
             // 4. 解析响应
-            String content = (String) response.get("content");
+            String content = (String) response.get("response");
             if (content == null || content.trim().isEmpty()) {
                 log.warn("⚠️ AI未返回有效响应，使用所有数据库");
                 return databaseService.getAllDatabases();
