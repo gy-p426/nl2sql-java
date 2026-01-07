@@ -34,12 +34,17 @@ public class SchemaService {
     private DataSource primaryDataSource;
 
     /**
-     * 导出所有数据库的 Schema
+     * 导出所有数据库的 Schema - 基于 database_host_config 表
      */
     public void exportAllSchemas(boolean forceRefresh) {
         log.info("正在导出多数据库表结构...");
         
         List<String> databases = databaseService.getAllDatabases();
+        
+        if (databases.isEmpty()) {
+            log.warn("⚠️ 未找到配置的数据库，跳过 Schema 导出");
+            return;
+        }
         
         for (String dbName : databases) {
             exportDatabaseSchema(dbName, forceRefresh);
@@ -214,7 +219,8 @@ public class SchemaService {
         
         for (String dbName : selectedDatabases) {
             Map<String, List<String>> keywords = databaseKeywords.getOrDefault(
-                dbName, Map.of("keywords_cn", List.of(), "keywords_en", List.of())
+//                dbName, Map.of("keywords_cn", List.of(), "keywords_en", List.of())
+                    dbName, Map.of("keywords_cn", List.of())
             );
             
             List<String> dbTables = selectTablesForDatabase(dbName, keywords, 10);
@@ -236,7 +242,8 @@ public class SchemaService {
         
         for (String dbName : selectedDatabases) {
             Map<String, List<String>> keywords = databaseKeywords.getOrDefault(
-                dbName, Map.of("keywords_cn", List.of(), "keywords_en", List.of())
+//                dbName, Map.of("keywords_cn", List.of(), "keywords_en", List.of())
+                    dbName, Map.of("keywords_cn", List.of())
             );
             
             List<String> dbTables = selectTablesForDatabase(dbName, keywords, maxTables);
@@ -447,14 +454,21 @@ public class SchemaService {
 
 
     /**
-     * 预处理关键词
+     * 预处理关键词，删除了英文关键词
+     * 该方法接收一个包含中英文关键词的Map，处理后返回处理过的关键词列表
+     * 处理过程包括：
+     * 1. 提取中文关键词
+     * 2. 去重后返回结果列表
+     *
+     * @param keywords 包含中英文关键词的Map，键为"keywords_cn"
+     * @return 处理后的关键词列表，已转换为小写并去重
      */
     private List<String> preprocessKeywords(Map<String, List<String>> keywords) {
         List<String> processed = new ArrayList<>();
         
         List<String> allKeywords = new ArrayList<>();
         allKeywords.addAll(keywords.getOrDefault("keywords_cn", Collections.emptyList()));
-        allKeywords.addAll(keywords.getOrDefault("keywords_en", Collections.emptyList()));
+//        allKeywords.addAll(keywords.getOrDefault("keywords_en", Collections.emptyList()));
         
         for (String kw : allKeywords) {
             String kwLower = kw.toLowerCase();
@@ -468,7 +482,7 @@ public class SchemaService {
     }
 
     /**
-     * 计算表得分
+     * 计算表得分，后续可以加上向量相似度
      */
     private double calculateTableScore(String tableLine, List<String> keywords) {
         String[] parts = tableLine.split("\\|\\|");
@@ -494,6 +508,7 @@ public class SchemaService {
                 }
             }
         }
+        //TODO：加入向量相似度得分
         
         return score;
     }

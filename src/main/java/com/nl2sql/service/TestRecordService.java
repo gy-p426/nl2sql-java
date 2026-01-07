@@ -395,7 +395,14 @@ public class TestRecordService {
         map.put("actual_result", record.getActualResult());
         map.put("status", record.getStatus());
         map.put("notes", record.getNotes());
-        map.put("images", parseImages(record.getImages()));
+        
+        // 构建完整的图片访问URL
+        List<String> imageFilenames = parseImages(record.getImages());
+        List<String> imageUrls = imageFilenames.stream()
+            .map(filename -> "/test-records/images/" + filename)
+            .collect(Collectors.toList());
+        map.put("images", imageUrls);
+        
         map.put("created_at", record.getCreatedAt());
         map.put("updated_at", record.getUpdatedAt());
         return map;

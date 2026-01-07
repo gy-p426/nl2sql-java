@@ -136,16 +136,16 @@ public class StreamingService {
             // 合并关键词
             Map<String, List<String>> mergedKeywords = new HashMap<>();
             mergedKeywords.put("keywords_cn", new ArrayList<>());
-            mergedKeywords.put("keywords_en", new ArrayList<>());
+//            mergedKeywords.put("keywords_en", new ArrayList<>());
             
             for (Map<String, List<String>> dbKeywords : databaseKeywords.values()) {
                 mergedKeywords.get("keywords_cn").addAll(dbKeywords.getOrDefault("keywords_cn", new ArrayList<>()));
-                mergedKeywords.get("keywords_en").addAll(dbKeywords.getOrDefault("keywords_en", new ArrayList<>()));
+//                mergedKeywords.get("keywords_en").addAll(dbKeywords.getOrDefault("keywords_en", new ArrayList<>()));
             }
             
             // 去重
             mergedKeywords.put("keywords_cn", new ArrayList<>(new HashSet<>(mergedKeywords.get("keywords_cn"))));
-            mergedKeywords.put("keywords_en", new ArrayList<>(new HashSet<>(mergedKeywords.get("keywords_en"))));
+//            mergedKeywords.put("keywords_en", new ArrayList<>(new HashSet<>(mergedKeywords.get("keywords_en"))));
             
             // 步骤4: 生成SQL
             sendProgress(emitter, "sql_generation", "processing", Map.of(

@@ -1,16 +1,17 @@
 package com.nl2sql.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nl2sql.client.OllamaClient;
 import com.nl2sql.client.VolcanoEngineClient;
-import com.nl2sql.config.NL2SQLProperties;
+import com.nl2sql.model.entity.DatabaseHostConfig;
 import com.nl2sql.model.entity.DatabaseOverview;
+import com.nl2sql.repository.DatabaseHostConfigRepository;
 import com.nl2sql.repository.DatabaseOverviewRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import javax.sql.DataSource;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -19,29 +20,49 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * 数据库服务 - 多数据库管理
+ * 数据库服务 - 基于 database_host_config 表的多数据库管理
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class DatabaseService {
 
-    private final Map<String, Map<String, DataSource>> databasePools;
-    private final NL2SQLProperties properties;
+    private final DatabaseHostConfigRepository databaseHostConfigRepository;
     private final DatabaseOverviewRepository databaseOverviewRepository;
+    private final DatabasePoolService databasePoolService;
     private final VolcanoEngineClient volcanoEngineClient;
     private final OllamaClient ollamaClient;
     private final DynamicConfigProvider configProvider;
     private final ObjectMapper objectMapper;
 
     /**
-     * 获取所有数据库名称
+     * 获取所有数据库名称 - 基于 database_host_config 表
      */
     public List<String> getAllDatabases() {
         List<String> databases = new ArrayList<>();
-        databasePools.values().forEach(hostPools -> 
-            databases.addAll(hostPools.keySet())
-        );
+        
+        try {
+            // 从 database_host_config 表获取所有激活的主机配置
+            List<DatabaseHostConfig> activeHosts = databaseHostConfigRepository.findByIsActiveTrue();
+            
+            for (DatabaseHostConfig host : activeHosts) {
+                try {
+                    List<String> hostDatabases = objectMapper.readValue(
+                        host.getDatabases(), 
+                        new TypeReference<List<String>>() {}
+                    );
+                    databases.addAll(hostDatabases);
+                } catch (Exception e) {
+                    log.warn("⚠️ 解析主机 {} 的数据库配置失败: {}", host.getName(), e.getMessage());
+                }
+            }
+            
+            log.debug("📋 从配置表获取到 {} 个数据库: {}", databases.size(), databases);
+            
+        } catch (Exception e) {
+            log.error("❌ 获取数据库列表失败: {}", e.getMessage());
+        }
+        
         return databases;
     }
 
@@ -49,13 +70,7 @@ public class DatabaseService {
      * 获取指定数据库的连接
      */
     public Connection getConnection(String dbName) throws SQLException {
-        for (Map<String, DataSource> hostPools : databasePools.values()) {
-            DataSource dataSource = hostPools.get(dbName);
-            if (dataSource != null) {
-                return dataSource.getConnection();
-            }
-        }
-        throw new SQLException("数据库 " + dbName + " 不存在");
+        return databasePoolService.getConnection(dbName);
     }
 
     /**
@@ -76,7 +91,12 @@ public class DatabaseService {
             // 添加LIMIT限制
             String limitedSql = sql;
             if (!sql.toUpperCase().contains("LIMIT")) {
-                limitedSql = sql + " LIMIT " + limit;
+                // 去掉末尾的分号，然后添加LIMIT，最后加上分号
+                limitedSql = sql.trim();
+                if (limitedSql.endsWith(";")) {
+                    limitedSql = limitedSql.substring(0, limitedSql.length() - 1);
+                }
+                limitedSql = limitedSql + " LIMIT " + limit + ";";
             }
             
             log.info("🔍 执行SQL: {}", limitedSql);
@@ -119,12 +139,7 @@ public class DatabaseService {
      * 测试数据库连接
      */
     public boolean testConnection(String dbName) {
-        try (Connection conn = getConnection(dbName)) {
-            return conn.isValid(5);
-        } catch (SQLException e) {
-            log.error("❌ 数据库 {} 连接测试失败: {}", dbName, e.getMessage());
-            return false;
-        }
+        return databasePoolService.testConnection(dbName);
     }
 
     /**
@@ -190,7 +205,7 @@ public class DatabaseService {
                 return getAllDatabases();
             }
             
-            String selectedDbsStr = ((String) response.get("content")).trim();
+            String selectedDbsStr = ((String) response.get("response")).trim();
             
             if (selectedDbsStr == null || selectedDbsStr.isEmpty()) {
                 log.warn("⚠️ AI响应为空，使用降级策略选择所有数据库");

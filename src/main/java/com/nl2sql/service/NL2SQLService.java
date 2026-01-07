@@ -36,7 +36,7 @@ public class NL2SQLService {
     /**
      * 处理查询
      */
-    public QueryResponse processQuery(String question, String windowId, String sessionId) {
+        public QueryResponse processQuery(String question, String windowId, String sessionId) {
         long startTime = System.currentTimeMillis();
         
         try {
@@ -222,6 +222,12 @@ public class NL2SQLService {
             // 1. 获取所有激活的数据库概览
             List<DatabaseOverview> overviews = databaseOverviewRepository.findByIsActiveTrue();
             
+            log.info("📋 数据库概览表中激活的数据库数量: {}", overviews.size());
+            List<String> activeDbNames = overviews.stream()
+                .map(DatabaseOverview::getDatabaseName)
+                .collect(Collectors.toList());
+            log.info("📋 激活的数据库列表: {}", activeDbNames);
+            
             if (overviews.isEmpty()) {
                 log.warn("⚠️ 没有可用的数据库概览，返回所有数据库");
                 return databaseService.getAllDatabases();
@@ -236,8 +242,8 @@ public class NL2SQLService {
             // 4. 解析响应
             String content = (String) response.get("response");
             if (content == null || content.trim().isEmpty()) {
-                log.warn("⚠️ AI未返回有效响应，使用所有数据库");
-                return databaseService.getAllDatabases();
+                log.warn("⚠️ AI未返回有效响应，使用所有激活数据库");
+                return activeDbNames;
             }
             
             // 5. 提取数据库列表
@@ -246,22 +252,23 @@ public class NL2SQLService {
             List<String> selectedDatabases = (List<String>) parsed.get("databases");
             
             if (selectedDatabases == null || selectedDatabases.isEmpty()) {
-                log.warn("⚠️ AI未返回有效的数据库列表，使用所有数据库");
-                return databaseService.getAllDatabases();
+                log.warn("⚠️ AI未返回有效的数据库列表，使用所有激活数据库");
+                return activeDbNames;
             }
             
-            // 6. 验证数据库是否存在
-            List<String> allDatabases = databaseService.getAllDatabases();
+            // 6. 验证数据库是否在激活列表中
             selectedDatabases = selectedDatabases.stream()
-                .filter(allDatabases::contains)
+                .filter(activeDbNames::contains)
                 .collect(Collectors.toList());
             
             if (selectedDatabases.isEmpty()) {
-                log.warn("⚠️ 选择的数据库都不存在，使用所有数据库");
-                return allDatabases;
+                log.warn("⚠️ AI选择的数据库都不在激活列表中，使用所有激活数据库");
+                log.warn("⚠️ AI选择: {}, 激活列表: {}", 
+                    parsed.get("databases"), activeDbNames);
+                return activeDbNames;
             }
             
-            log.info("✅ 智能选择数据库: {}", selectedDatabases);
+            log.info("✅ 智能选择数据库: {} (从激活列表: {})", selectedDatabases, activeDbNames);
             return selectedDatabases;
             
         } catch (Exception e) {
@@ -352,6 +359,121 @@ public class NL2SQLService {
             
             请仔细分析并输出：
             """, previous, current);
+    }
+
+    /**
+     * 处理数据库查询（第一阶段）
+     */
+    public Map<String, Object> processQueryDb(String question, String windowId) {
+        long startTime = System.currentTimeMillis();
+        
+        try {
+            // 1. 保存问题到 session
+            String newSessionId = sessionService.saveQuestionToSession(question, windowId);
+            
+            // 3. 选择数据库
+            List<String> selectedDatabases = selectDatabases(question);
+            log.info("📊 选择数据库: {}", selectedDatabases);
+            
+            // 4. 提取关键词
+            Map<String, Map<String, List<String>>> databaseKeywords = 
+                keywordExtractorService.extractKeywords(question, selectedDatabases);
+            
+            // 5. 选择候选表
+            log.info("🔍 步骤5: 选择候选表");
+            List<String> candidateTables = schemaService.selectCandidateTables(
+                databaseKeywords, selectedDatabases, 10
+            );
+            
+            long executionTime = System.currentTimeMillis() - startTime;
+            
+            Map<String, List<String>> mergedKeywords = flattenKeywords(databaseKeywords);
+            
+            return Map.of(
+                "success", true,
+                "sessionId", newSessionId,
+                "question", question,
+                "selectedDatabases", selectedDatabases,
+                "keywords", mergedKeywords,
+                "candidateTables", candidateTables,
+                "executionTime", executionTime
+            );
+                
+        } catch (Exception e) {
+            log.error("❌ 数据库查询处理错误: {}", e.getMessage(), e);
+            return Map.of(
+                "success", false,
+                "error", e.getMessage()
+            );
+        }
+    }
+
+    /**
+     * 处理SQL查询（第二阶段）
+     */
+    public Map<String, Object> processQuerySql(String question, List<String> candidateTables, 
+                                               Map<String, List<String>> mergedKeywords) {
+        long startTime = System.currentTimeMillis();
+        
+        try {
+            if (candidateTables.isEmpty()) {
+                return Map.of(
+                    "success", false,
+                    "error", "未找到相关表结构"
+                );
+            }
+            
+            // 6. 生成 SQL
+            log.info("🔍 步骤6: 生成SQL");
+            List<String> generatedSqls = sqlGeneratorService.generateSQL(
+                question, candidateTables, mergedKeywords
+            );
+            
+            if (generatedSqls.isEmpty()) {
+                return Map.of(
+                    "success", false,
+                    "error", "未能生成有效的SQL语句"
+                );
+            }
+            
+            // 7. 执行 SQL
+            log.info("🔍 步骤7: 执行SQL");
+            String successfulSql = null;
+            List<Map<String, Object>> results = Collections.emptyList();
+            
+            // 执行第一个成功的 SQL
+            for (int i = 0; i < generatedSqls.size(); i++) {
+                String sql = generatedSqls.get(i);
+                try {
+                    results = databaseService.executeQuery(sql, 100);
+                    successfulSql = sql;
+                    if (!results.isEmpty()) {
+                        log.info("✅ 找到第一个执行成功的SQL (第{}个)", i + 1);
+                        break;
+                    }
+                } catch (Exception e) {
+                    log.warn("⚠️ SQL执行失败 (第{}个): {}", i + 1, e.getMessage());
+                }
+            }
+            
+            long executionTime = System.currentTimeMillis() - startTime;
+            
+            return Map.of(
+                "success", true,
+                "question", question,
+                "sql", successfulSql != null ? successfulSql : "",
+                "results", results,
+                "resultCount", results.size(),
+                "executionTime", executionTime
+            );
+                
+        } catch (Exception e) {
+            log.error("❌ SQL查询处理错误: {}", e.getMessage(), e);
+            return Map.of(
+                "success", false,
+                "error", e.getMessage()
+            );
+        }
     }
 
     private Map<String, List<String>> flattenKeywords(

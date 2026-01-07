@@ -13,6 +13,7 @@ import java.util.Map;
 
 /**
  * 数据库配置 - 多数据源支持
+ * 注意：此配置已被 DatabasePoolService 替代，基于 database_host_config 表进行动态管理
  */
 @Slf4j
 @Configuration
@@ -21,6 +22,21 @@ public class DatabaseConfig {
 
     private final NL2SQLProperties properties;
 
+    /**
+     * 创建空的数据库连接池 Map，实际的连接池由 DatabasePoolService 管理
+     * 保留此 Bean 是为了满足依赖注入的需要
+     */
+    @Bean
+    public Map<String, Map<String, DataSource>> databasePools() {
+        log.info("📋 使用 DatabasePoolService 进行动态数据库连接池管理");
+        return new HashMap<>();
+    }
+    
+    /* 
+     * 原有的基于配置文件的连接池创建逻辑已被注释，
+     * 现在使用 DatabasePoolService 基于 database_host_config 表进行动态管理
+     */
+    /*
     @Bean
     public Map<String, Map<String, DataSource>> databasePools() {
         Map<String, Map<String, DataSource>> pools = new HashMap<>();
@@ -55,4 +71,5 @@ public class DatabaseConfig {
         
         return pools;
     }
+    */
 }

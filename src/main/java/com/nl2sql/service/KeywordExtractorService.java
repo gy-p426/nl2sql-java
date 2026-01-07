@@ -41,7 +41,7 @@ public class KeywordExtractorService {
     }
 
     /**
-     * 提取关键词（改进版）
+     * 提取关键词（改进版），只提取中文关键词
      */
     public Map<String, Map<String, List<String>>> extractKeywords(
             String question, 
@@ -90,7 +90,7 @@ public class KeywordExtractorService {
     }
 
     /**
-     * 构建关键词提取提示词 - 参考sql-b-v4.py的_build_database_specific_prompt_with_context方法
+     * 构建关键词提取提示词，仅使用中文关键词
      */
     private String buildKeywordExtractionPrompt(String question, String dbName) {
         // 懒加载数据库关键词
@@ -105,29 +105,23 @@ public class KeywordExtractorService {
         }
         
         List<String> keywordsCn = dbKeywords.get("keywords_cn");
-        List<String> keywordsEn = dbKeywords.get("keywords_en");
+//        List<String> keywordsEn = dbKeywords.get("keywords_en");
         
         // 限制显示的关键词数量，避免提示词过长
         int maxDisplay = 1000;
         List<String> chineseDisplay = keywordsCn.subList(0, Math.min(keywordsCn.size(), maxDisplay));
-        List<String> englishDisplay = keywordsEn.subList(0, Math.min(keywordsEn.size(), maxDisplay));
+//        List<String> englishDisplay = keywordsEn.subList(0, Math.min(keywordsEn.size(), maxDisplay));
         
         return String.format("""
-            请分析问题，从数据库%s的关键词库中提取与问题相关的关键词：
+            请分析问题，从数据库%s的关键词库中提取与问题最相关的20个中文关键词：
 
             [数据库%s中文关键词库]
             %s
 
-            [数据库%s英文关键词库]
-            %s
-
-            [输入参数]
-            - question: %s
-            - selected_databases: [%s]
 
             [输出格式]
             严格按照JSON格式输出：
-            {"keywords_cn": ["关键词1", "关键词2"], "keywords_en": ["keyword1", "keyword2"]}
+            {"keywords_cn": ["关键词1", "关键词2"]}
 
             [问题]
             %s
@@ -135,10 +129,10 @@ public class KeywordExtractorService {
             dbName, 
             dbName, 
             String.join(", ", chineseDisplay),
-            dbName,
-            String.join(", ", englishDisplay),
-            question,
-            dbName,
+//          英文关键词
+//            dbName,
+//            String.join(", ", englishDisplay),
+//            , "keywords_en": ["keyword1", "keyword2"]
             question);
     }
     
@@ -167,7 +161,7 @@ public class KeywordExtractorService {
      */
     private Map<String, List<String>> extractKeywordsFallback(String question) {
         List<String> keywordsCn = new ArrayList<>();
-        List<String> keywordsEn = new ArrayList<>();
+//        List<String> keywordsEn = new ArrayList<>();
         
         // 使用 HanLP 分词
         List<Term> terms = HanLP.segment(question);
@@ -184,32 +178,43 @@ public class KeywordExtractorService {
         }
         
         // 提取英文单词
-        Pattern pattern = Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*");
-        Matcher matcher = pattern.matcher(question);
-        while (matcher.find()) {
-            String word = matcher.group();
-            if (word.length() >= 3) {
-                keywordsEn.add(word.toLowerCase());
-            }
-        }
+//        Pattern pattern = Pattern.compile("[a-zA-Z_][a-zA-Z0-9_]*");
+//        Matcher matcher = pattern.matcher(question);
+//        while (matcher.find()) {
+//            String word = matcher.group();
+//            if (word.length() >= 3) {
+//                keywordsEn.add(word.toLowerCase());
+//            }
+//        }
         
         Map<String, List<String>> keywords = new HashMap<>();
         keywords.put("keywords_cn", keywordsCn.stream().distinct().limit(10).toList());
-        keywords.put("keywords_en", keywordsEn.stream().distinct().limit(10).toList());
+//        keywords.put("keywords_en", keywordsEn.stream().distinct().limit(10).toList());
         
         return keywords;
     }
 
-    @SuppressWarnings("unchecked")
+    @SuppressWarnings("unchecked")  // 抑制编译器 unchecked 警告，因为我们在进行类型转换时没有进行运行时类型检查
+    /**
+     * 将包含关键词的Map转换为规范化的关键词映射
+     * @param parsed 包含原始关键词数据的Map，键为字符串，值为Object类型
+     * @return 返回一个规范化后的Map，其中包含中文关键词列表（删除了英文关键词列表）
+     */
     private Map<String, List<String>> convertToKeywordMap(Map<String, Object> parsed) {
+        // 创建一个新的HashMap用于存储结果
         Map<String, List<String>> result = new HashMap<>();
         
+        // 从输入Map中获取中文关键词对象
         Object cnObj = parsed.get("keywords_cn");
-        Object enObj = parsed.get("keywords_en");
+        // 从输入Map中获取英文关键词对象
+//        Object enObj = parsed.get("keywords_en");
         
+        // 处理中文关键词：如果是List类型则转换，否则返回空List
         result.put("keywords_cn", cnObj instanceof List ? (List<String>) cnObj : Collections.emptyList());
-        result.put("keywords_en", enObj instanceof List ? (List<String>) enObj : Collections.emptyList());
+        // 处理英文关键词：如果是List类型则转换，否则返回空List
+//        result.put("keywords_en", enObj instanceof List ? (List<String>) enObj : Collections.emptyList());
         
+        // 返回处理后的结果Map
         return result;
     }
     

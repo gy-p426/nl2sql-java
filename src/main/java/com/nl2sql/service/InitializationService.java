@@ -1,8 +1,11 @@
 package com.nl2sql.service;
 
-import com.nl2sql.config.NL2SQLProperties;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.nl2sql.model.entity.DatabaseHostConfig;
 import com.nl2sql.model.entity.DatabaseOverview;
 import com.nl2sql.model.entity.DatabaseSchema;
+import com.nl2sql.repository.DatabaseHostConfigRepository;
 import com.nl2sql.repository.DatabaseOverviewRepository;
 import com.nl2sql.repository.DatabaseSchemaRepository;
 import lombok.RequiredArgsConstructor;
@@ -15,35 +18,42 @@ import java.util.List;
 
 /**
  * 初始化服务 - 应用启动时执行
+ * 基于 database_host_config 表进行初始化
  */
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class InitializationService implements CommandLineRunner {
 
-    private final DatabaseService databaseService;
+    private final DatabaseHostConfigRepository databaseHostConfigRepository;
     private final SchemaService schemaService;
-    private final NL2SQLProperties properties;
     private final DatabaseOverviewRepository overviewRepository;
     private final DatabaseSchemaRepository schemaRepository;
-    private final DataMigrationService dataMigrationService;
+    private final ConfigService configService;
+    private final DatabasePoolService databasePoolService;
+    private final ObjectMapper objectMapper;
 
     @Override
     public void run(String... args) {
         log.info("🚀 开始初始化 NL2SQL 服务...");
         
         try {
-            // 0. 数据迁移（首次启动时从文件导入数据）
-            dataMigrationService.migrateAllData();
+            // 1. 检测 database_host_config 表中已存在的数据库主机配置
+            List<DatabaseHostConfig> hostConfigs = databaseHostConfigRepository.findByIsActiveTrue();
             
-            // 1. 检查数据库连接
-            checkDatabaseConnections();
+            if (hostConfigs.isEmpty()) {
+                log.warn("⚠️ 未找到激活的数据库主机配置，跳过初始化");
+                return;
+            }
             
-            // 2. 初始化 Schema 文件
-            initializeSchemas();
+            // 2. 自动初始化每个数据库主机配置中的数据库连接池
+            initializeDatabasePools(hostConfigs);
             
-            // 3. 生成数据库概览
-            generateDatabaseOverview();
+            // 3. 自动导出每个数据库的 Schema 数据
+            exportAllDatabaseSchemas(hostConfigs);
+            
+            // 4. 自动生成并保存每个数据库的概览
+            generateDatabaseOverviews(hostConfigs);
             
             log.info("✅ NL2SQL 服务初始化完成");
             
@@ -53,78 +63,88 @@ public class InitializationService implements CommandLineRunner {
     }
 
     /**
-     * 检查数据库连接
+     * 初始化数据库连接池
      */
-    private void checkDatabaseConnections() {
-        log.info("📡 检查数据库连接...");
+    private void initializeDatabasePools(List<DatabaseHostConfig> hostConfigs) {
+        log.info("🔗 初始化数据库连接池...");
         
-        List<String> databases = databaseService.getAllDatabases();
-        int successCount = 0;
+        // 使用 DatabasePoolService 来初始化连接池
+        databasePoolService.initializeAllPools();
         
-        for (String dbName : databases) {
-            if (databaseService.testConnection(dbName)) {
-                successCount++;
-                log.info("  ✅ {} 连接成功", dbName);
-            } else {
-                log.warn("  ⚠️ {} 连接失败", dbName);
-            }
-        }
-        
-        log.info("📊 数据库连接检查完成: {}/{} 成功", successCount, databases.size());
+        log.info("✅ 数据库连接池初始化完成");
     }
 
     /**
-     * 初始化 Schema 文件
+     * 导出所有配置的数据库的 Schema 数据
      */
-    private void initializeSchemas() {
-        log.info("📝 初始化数据库 Schema...");
+    private void exportAllDatabaseSchemas(List<DatabaseHostConfig> hostConfigs) {
+        log.info("📝 导出数据库 Schema...");
         
-        boolean forceRefresh = properties.getSettings().getRefreshSchema();
-        schemaService.exportAllSchemas(forceRefresh);
+        for (DatabaseHostConfig hostConfig : hostConfigs) {
+            try {
+                List<String> databases = objectMapper.readValue(
+                    hostConfig.getDatabases(), 
+                    new TypeReference<List<String>>() {}
+                );
+                
+                for (String dbName : databases) {
+                    log.info("📋 导出数据库 {} 的 Schema", dbName);
+                    schemaService.exportDatabaseSchema(dbName, true); // 强制刷新
+                }
+                
+            } catch (Exception e) {
+                log.error("❌ 导出主机 {} Schema 失败: {}", hostConfig.getName(), e.getMessage());
+            }
+        }
         
-        log.info("✅ Schema 初始化完成");
+        log.info("✅ Schema 导出完成");
     }
 
     /**
      * 生成数据库概览
      */
     @Transactional
-    private void generateDatabaseOverview() {
+    private void generateDatabaseOverviews(List<DatabaseHostConfig> hostConfigs) {
         log.info("📋 生成数据库概览...");
         
         try {
-            List<String> databases = databaseService.getAllDatabases();
-            
-            for (String dbName : databases) {
-                // 从数据库读取Schema信息
-                List<DatabaseSchema> schemas = schemaRepository.findByDatabaseName(dbName);
+            for (DatabaseHostConfig hostConfig : hostConfigs) {
+                List<String> databases = objectMapper.readValue(
+                    hostConfig.getDatabases(), 
+                    new TypeReference<List<String>>() {}
+                );
                 
-                if (!schemas.isEmpty()) {
-                    StringBuilder tableSummary = new StringBuilder();
+                for (String dbName : databases) {
+                    // 从数据库读取Schema信息
+                    List<DatabaseSchema> schemas = schemaRepository.findByDatabaseName(dbName);
                     
-                    for (DatabaseSchema schema : schemas) {
-                        String tableName = schema.getTableName();
-                        String tableComment = schema.getTableComment() != null ? schema.getTableComment() : "无注释";
-                        tableSummary.append(String.format("%s(%s), ", tableName, tableComment));
+                    if (!schemas.isEmpty()) {
+                        StringBuilder tableSummary = new StringBuilder();
+                        
+                        for (DatabaseSchema schema : schemas) {
+                            String tableName = schema.getTableName();
+                            String tableComment = schema.getTableComment() != null ? schema.getTableComment() : "无注释";
+                            tableSummary.append(String.format("%s(%s), ", tableName, tableComment));
+                        }
+                        
+                        if (tableSummary.length() > 0) {
+                            tableSummary.setLength(tableSummary.length() - 2); // 移除最后的逗号和空格
+                        }
+                        
+                        // 保存或更新数据库概览
+                        DatabaseOverview overview = overviewRepository.findByDatabaseName(dbName)
+                            .orElse(new DatabaseOverview());
+                        
+                        overview.setDatabaseName(dbName);
+                        overview.setDescription(String.format("数据库名：%s", dbName));
+                        overview.setTableSummary(tableSummary.toString());
+                        overview.setTableCount(schemas.size());
+                        overview.setIsActive(true);
+                        
+                        overviewRepository.save(overview);
+                        
+                        log.info("✅ 数据库 {} 概览已保存，共 {} 个表", dbName, schemas.size());
                     }
-                    
-                    if (tableSummary.length() > 0) {
-                        tableSummary.setLength(tableSummary.length() - 2); // 移除最后的逗号和空格
-                    }
-                    
-                    // 保存或更新数据库概览
-                    DatabaseOverview overview = overviewRepository.findByDatabaseName(dbName)
-                        .orElse(new DatabaseOverview());
-                    
-                    overview.setDatabaseName(dbName);
-                    overview.setDescription(String.format("数据库名：%s", dbName));
-                    overview.setTableSummary(tableSummary.toString());
-                    overview.setTableCount(schemas.size());
-                    overview.setIsActive(true);
-                    
-                    overviewRepository.save(overview);
-                    
-                    log.info("✅ 数据库 {} 概览已保存，共 {} 个表", dbName, schemas.size());
                 }
             }
             

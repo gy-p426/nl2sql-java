@@ -1,7 +1,10 @@
 package com.nl2sql.controller;
 
-import com.nl2sql.config.NL2SQLProperties;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nl2sql.model.dto.ApiResponse;
+import com.nl2sql.model.entity.DatabaseHostConfig;
+import com.nl2sql.repository.DatabaseHostConfigRepository;
 import com.nl2sql.service.ConfigService;
 import com.nl2sql.service.DatabaseService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -10,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +30,8 @@ public class ConfigController {
 
     private final DatabaseService databaseService;
     private final ConfigService configService;
+    private final DatabaseHostConfigRepository databaseHostConfigRepository;
+    private final ObjectMapper objectMapper;
 
     @GetMapping
     @Operation(summary = "获取系统配置")
@@ -56,10 +62,25 @@ public class ConfigController {
     }
 
     @GetMapping("/databases")
-    @Operation(summary = "获取所有数据库列表")
+    @Operation(summary = "获取所有配置的数据库列表")
     public ApiResponse<List<String>> getDatabases() {
         try {
-            List<String> databases = databaseService.getAllDatabases();
+            // 基于 database_host_config 表获取数据库列表
+            List<DatabaseHostConfig> activeHosts = databaseHostConfigRepository.findByIsActiveTrue();
+            List<String> databases = new ArrayList<>();
+            
+            for (DatabaseHostConfig host : activeHosts) {
+                try {
+                    List<String> hostDatabases = objectMapper.readValue(
+                        host.getDatabases(), 
+                        new TypeReference<List<String>>() {}
+                    );
+                    databases.addAll(hostDatabases);
+                } catch (Exception e) {
+                    log.warn("⚠️ 解析主机 {} 的数据库配置失败: {}", host.getName(), e.getMessage());
+                }
+            }
+            
             return ApiResponse.success(databases);
         } catch (Exception e) {
             log.error("❌ 获取数据库列表错误: {}", e.getMessage());
