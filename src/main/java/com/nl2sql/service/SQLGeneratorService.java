@@ -57,7 +57,7 @@ public class SQLGeneratorService {
             log.info("🔍 检索到 {} 个相关历史示例", relevantPairs.size());
             
             // 构建提示词
-            String prompt = buildSQLPrompt(question, candidateTables, keywords, relevantPairs);
+            String prompt = buildSQLPrompt(question, candidateTables, relevantPairs);
             log.debug("📝 SQL生成提示词长度: {}字符", prompt.length());
             
             // 调用 AI 生成 SQL
@@ -106,7 +106,6 @@ public class SQLGeneratorService {
     private String buildSQLPrompt(
             String question,
             List<String> candidateTables,
-            Map<String, List<String>> keywords,
             List<TrainingPair> relevantPairs) {
         
         // 获取当前时间信息
@@ -160,7 +159,7 @@ public class SQLGeneratorService {
                 tablesInfo.append("列信息:\n");
                 
                 int colCount = 0;
-                for (int j = 4; j < parts.length && colCount < 10; j += 3) {
+                for (int j = 4; j < parts.length; j += 3) {
                     if (j + 2 < parts.length) {
                         String colName = parts[j];
                         String colComment = parts[j + 1];
