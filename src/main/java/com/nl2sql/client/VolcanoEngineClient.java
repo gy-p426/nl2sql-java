@@ -35,8 +35,9 @@ public class VolcanoEngineClient {
         try {
             log.info("📤 向AI模型发送请求 - 模型: {}, 温度: {}", 
                 properties.getVolcanoEngine().getModel(), temperature);
-            log.debug("📝 发送的提示词: {}", 
-                prompt.length() > 200 ? prompt.substring(0, 200) + "..." : prompt);
+//            log.debug("📝 发送的提示词: {}",
+//                prompt.length() > 200 ? prompt.substring(0, 200) + "..." : prompt);
+            log.debug("📝 发送的提示词: {}", prompt);
 
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("model", properties.getVolcanoEngine().getModel());

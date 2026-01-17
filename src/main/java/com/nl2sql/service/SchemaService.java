@@ -181,23 +181,35 @@ public class SchemaService {
                         
                         // 插入列信息
                         String columnName = rs.getString("COLUMN_NAME");
+                        String columnComment = rs.getString("COLUMN_COMMENT");
+                        
                         if (columnName != null) {
-                            Integer schemaId = tableSchemaIds.get(tableName);
-                            if (schemaId != null) {
-                                columnPs.setInt(1, schemaId);  // schema_id
-                                columnPs.setString(2, dbName);
-                                columnPs.setString(3, tableName);
-                                columnPs.setString(4, columnName);
-                                columnPs.setString(5, rs.getString("COLUMN_TYPE"));
-                                columnPs.setString(6, rs.getString("DATA_TYPE"));
-                                columnPs.setString(7, rs.getString("COLUMN_COMMENT"));
-                                columnPs.setBoolean(8, "YES".equals(rs.getString("IS_NULLABLE")));
-                                columnPs.setString(9, rs.getString("COLUMN_DEFAULT"));
-                                columnPs.setString(10, rs.getString("COLUMN_KEY"));
-                                columnPs.setInt(11, rs.getInt("ORDINAL_POSITION"));
-                                columnPs.executeUpdate();
-                                
-                                columnCount++;
+                            // 过滤逻辑：排除列注释为空或为"无用"的列，但保留"deleted"列
+                            boolean shouldSkip = false;
+                            if (!"deleted".equalsIgnoreCase(columnName)) {
+                                if (columnComment == null || columnComment.trim().isEmpty() || "无用".equals(columnComment.trim())) {
+                                    shouldSkip = true;
+                                }
+                            }
+                            
+                            if (!shouldSkip) {
+                                Integer schemaId = tableSchemaIds.get(tableName);
+                                if (schemaId != null) {
+                                    columnPs.setInt(1, schemaId);  // schema_id
+                                    columnPs.setString(2, dbName);
+                                    columnPs.setString(3, tableName);
+                                    columnPs.setString(4, columnName);
+                                    columnPs.setString(5, rs.getString("COLUMN_TYPE"));
+                                    columnPs.setString(6, rs.getString("DATA_TYPE"));
+                                    columnPs.setString(7, columnComment);
+                                    columnPs.setBoolean(8, "YES".equals(rs.getString("IS_NULLABLE")));
+                                    columnPs.setString(9, rs.getString("COLUMN_DEFAULT"));
+                                    columnPs.setString(10, rs.getString("COLUMN_KEY"));
+                                    columnPs.setInt(11, rs.getInt("ORDINAL_POSITION"));
+                                    columnPs.executeUpdate();
+                                    
+                                    columnCount++;
+                                }
                             }
                         }
                     }
@@ -440,11 +452,24 @@ public class SchemaService {
             ResultSet rs = stmt.executeQuery(sql);
             while (rs.next()) {
                 String tableName = rs.getString("TABLE_NAME");
-                String columnStr = "||" + rs.getString("COLUMN_NAME") + 
-                                 "||" + (rs.getString("COLUMN_COMMENT") != null ? rs.getString("COLUMN_COMMENT") : "无注释") +
-                                 "||" + (rs.getString("COLUMN_TYPE") != null ? rs.getString("COLUMN_TYPE") : "");
+                String columnName = rs.getString("COLUMN_NAME");
+                String columnComment = rs.getString("COLUMN_COMMENT");
                 
-                columnInfo.computeIfAbsent(tableName, k -> new ArrayList<>()).add(columnStr);
+                // 过滤逻辑：排除列注释为空或为"无用"的列，但保留"deleted"列
+                boolean shouldSkip = false;
+                if (!"deleted".equalsIgnoreCase(columnName)) {
+                    if (columnComment == null || columnComment.trim().isEmpty() || "无用".equals(columnComment.trim())) {
+                        shouldSkip = true;
+                    }
+                }
+                
+                if (!shouldSkip) {
+                    String columnStr = "||" + columnName + 
+                                     "||" + (columnComment != null ? columnComment : "无注释") +
+                                     "||" + (rs.getString("COLUMN_TYPE") != null ? rs.getString("COLUMN_TYPE") : "");
+                    
+                    columnInfo.computeIfAbsent(tableName, k -> new ArrayList<>()).add(columnStr);
+                }
             }
         }
         

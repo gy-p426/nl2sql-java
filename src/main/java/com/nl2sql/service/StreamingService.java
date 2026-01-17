@@ -149,7 +149,7 @@ public class StreamingService {
             
             // 步骤4: 生成SQL
             sendProgress(emitter, "sql_generation", "processing", Map.of(
-                "message", "正在生成SQL语句..."
+                "message", "正在生成查询语句..."
             ), startTime);
             
             List<String> generatedSqls = sqlGeneratorService.generateSQL(
@@ -158,17 +158,16 @@ public class StreamingService {
             
             if (generatedSqls == null || generatedSqls.isEmpty()) {
                 sendProgress(emitter, "sql_generation", "error", Map.of(
-                    "message", "未能生成有效的SQL语句",
-                    "error", "未能生成有效的SQL语句"
+                    "message", "未能生成有效的查询语句",
+                    "error", "未能生成有效的查询语句"
                 ), startTime);
                 emitter.complete();
                 return;
             }
             
             String firstSql = generatedSqls.get(0);
-            String sqlPreview = firstSql.length() > 100 ? 
-                firstSql.substring(0, 100) + "..." : firstSql;
-            String sqlMessage = String.format("成功生成SQL语句：%s", sqlPreview);
+            String sqlPreview = firstSql;
+            String sqlMessage = String.format("成功生成查询语句：%s", sqlPreview);
             
             sendProgress(emitter, "sql_generation", "completed", Map.of(
                 "message", sqlMessage,
@@ -177,7 +176,7 @@ public class StreamingService {
             
             // 步骤5: 执行SQL
             sendProgress(emitter, "sql_execution", "processing", Map.of(
-                "message", "正在执行SQL查询..."
+                "message", "正在执行查询语句..."
             ), startTime);
             
             String successfulSql = null;
@@ -194,7 +193,7 @@ public class StreamingService {
                 }
             }
             
-            String execMessage = String.format("SQL执行完成，返回 %d 行数据", successfulResults.size());
+            String execMessage = String.format("查询语句执行完成，返回 %d 行数据", successfulResults.size());
             sendProgress(emitter, "sql_execution", "completed", Map.of(
                 "message", execMessage,
                 "row_count", successfulResults.size(),
