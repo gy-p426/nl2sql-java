@@ -32,6 +32,7 @@ public class NL2SQLService {
     private final DatabaseOverviewRepository databaseOverviewRepository;
     private final JsonParser jsonParser;
     private final DynamicConfigProvider configProvider;
+    private final LLMRouter llmRouter;
 
     /**
      * 处理查询
@@ -78,14 +79,14 @@ public class NL2SQLService {
                     .build();
             }
             
-            // 6. 生成 SQL
+            // 6. 生成 SQL（包含解释）
             log.info("🔍 步骤6: 生成SQL");
             Map<String, List<String>> mergedKeywords = flattenKeywords(databaseKeywords);
-            List<String> generatedSqls = sqlGeneratorService.generateSQL(
+            com.nl2sql.model.dto.SQLResult sqlResult = sqlGeneratorService.generateSQLWithExplanation(
                 mergedQuestion, candidateTables, mergedKeywords
             );
             
-            if (generatedSqls.isEmpty()) {
+            if (sqlResult == null || sqlResult.getSql() == null) {
                 return QueryResponse.builder()
                     .success(false)
                     .error("未能生成有效的SQL语句")
@@ -96,22 +97,13 @@ public class NL2SQLService {
             
             // 7. 执行 SQL
             log.info("🔍 步骤7: 执行SQL");
-            String successfulSql = null;
             List<Map<String, Object>> results = Collections.emptyList();
             
-            // 执行第一个成功的 SQL
-            for (int i = 0; i < generatedSqls.size(); i++) {
-                String sql = generatedSqls.get(i);
-                try {
-                    results = databaseService.executeQuery(sql, 100);
-                    successfulSql = sql;
-                    if (!results.isEmpty()) {
-                        log.info("✅ 找到第一个执行成功的SQL (第{}个)", i + 1);
-                        break;
-                    }
-                } catch (Exception e) {
-                    log.warn("⚠️ SQL执行失败 (第{}个): {}", i + 1, e.getMessage());
-                }
+            try {
+                results = databaseService.executeQuery(sqlResult.getSql(), 100);
+                log.info("✅ SQL执行成功，返回 {} 行", results.size());
+            } catch (Exception e) {
+                log.warn("⚠️ SQL执行失败: {}", e.getMessage());
             }
             
             long executionTime = System.currentTimeMillis() - startTime;
@@ -124,7 +116,9 @@ public class NL2SQLService {
                 .isContinuous(isContinuous)
                 .selectedDatabases(selectedDatabases)
                 .keywords(mergedKeywords)
-                .sql(successfulSql)
+                .sql(sqlResult.getSql())
+                .sqlExplanation(sqlResult.getExplanation())
+                .model(sqlResult.getModel())
                 .results(results)
                 .resultCount(results.size())
                 .executionTime(executionTime)
@@ -169,7 +163,9 @@ public class NL2SQLService {
         
         // 使用 AI 判断是否连续
         String prompt = buildContinuousQuestionPrompt(previousQuestion, newQuestion);
-        Map<String, Object> response = volcanoEngineClient.generate(prompt, 0.1);
+        Map<String, Object> response = llmRouter.route(
+            com.nl2sql.enums.LLMTaskType.CONTINUOUS_QUESTION, prompt, 0.1
+        );
         
         if (response.containsKey("error")) {
             log.warn("⚠️ 连续问题判断失败，默认为非连续问题");
@@ -237,7 +233,9 @@ public class NL2SQLService {
             String prompt = buildDatabaseSelectionPrompt(question, overviews);
             
             // 3. 调用AI模型
-            Map<String, Object> response = volcanoEngineClient.generate(prompt, 0.1);
+            Map<String, Object> response = llmRouter.route(
+                com.nl2sql.enums.LLMTaskType.DATABASE_SELECTION, prompt, 0.1
+            );
             
             // 4. 解析响应
             String content = (String) response.get("response");
@@ -423,13 +421,13 @@ public class NL2SQLService {
                 );
             }
             
-            // 6. 生成 SQL
+            // 6. 生成 SQL（包含解释）
             log.info("🔍 步骤6: 生成SQL");
-            List<String> generatedSqls = sqlGeneratorService.generateSQL(
+            com.nl2sql.model.dto.SQLResult sqlResult = sqlGeneratorService.generateSQLWithExplanation(
                 question, candidateTables, mergedKeywords
             );
             
-            if (generatedSqls.isEmpty()) {
+            if (sqlResult == null || sqlResult.getSql() == null) {
                 return Map.of(
                     "success", false,
                     "error", "未能生成有效的SQL语句"
@@ -438,22 +436,13 @@ public class NL2SQLService {
             
             // 7. 执行 SQL
             log.info("🔍 步骤7: 执行SQL");
-            String successfulSql = null;
             List<Map<String, Object>> results = Collections.emptyList();
             
-            // 执行第一个成功的 SQL
-            for (int i = 0; i < generatedSqls.size(); i++) {
-                String sql = generatedSqls.get(i);
-                try {
-                    results = databaseService.executeQuery(sql, 100);
-                    successfulSql = sql;
-                    if (!results.isEmpty()) {
-                        log.info("✅ 找到第一个执行成功的SQL (第{}个)", i + 1);
-                        break;
-                    }
-                } catch (Exception e) {
-                    log.warn("⚠️ SQL执行失败 (第{}个): {}", i + 1, e.getMessage());
-                }
+            try {
+                results = databaseService.executeQuery(sqlResult.getSql(), 100);
+                log.info("✅ SQL执行成功，返回 {} 行", results.size());
+            } catch (Exception e) {
+                log.warn("⚠️ SQL执行失败: {}", e.getMessage());
             }
             
             long executionTime = System.currentTimeMillis() - startTime;
@@ -461,7 +450,9 @@ public class NL2SQLService {
             return Map.of(
                 "success", true,
                 "question", question,
-                "sql", successfulSql != null ? successfulSql : "",
+                "sql", sqlResult.getSql(),
+                "sqlExplanation", sqlResult.getExplanation(),
+                "model", sqlResult.getModel(),
                 "results", results,
                 "resultCount", results.size(),
                 "executionTime", executionTime

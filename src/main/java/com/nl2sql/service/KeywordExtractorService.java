@@ -28,16 +28,19 @@ public class KeywordExtractorService {
     private final VolcanoEngineClient volcanoEngineClient;
     private final JsonParser jsonParser;
     private final DatabaseService databaseService;
+    private final LLMRouter llmRouter;
     
     // 数据库关键词缓存
     private final Map<String, Map<String, List<String>>> databaseKeywords = new HashMap<>();
     
     public KeywordExtractorService(VolcanoEngineClient volcanoEngineClient, 
                                  JsonParser jsonParser, 
-                                 DatabaseService databaseService) {
+                                 DatabaseService databaseService,
+                                 LLMRouter llmRouter) {
         this.volcanoEngineClient = volcanoEngineClient;
         this.jsonParser = jsonParser;
         this.databaseService = databaseService;
+        this.llmRouter = llmRouter;
     }
 
     /**
@@ -72,7 +75,9 @@ public class KeywordExtractorService {
     private Map<String, List<String>> extractKeywordsForDatabase(String question, String dbName) {
         String prompt = buildKeywordExtractionPrompt(question, dbName);
         
-        Map<String, Object> response = volcanoEngineClient.generate(prompt, 0.1);
+        Map<String, Object> response = llmRouter.route(
+            com.nl2sql.enums.LLMTaskType.KEYWORD_EXTRACTION, prompt, 0.1
+        );
         
         if (response.containsKey("error")) {
             log.warn("⚠️ AI关键词提取失败，使用回退方法");

@@ -29,11 +29,13 @@ public class SQLGeneratorService {
     private final VolcanoEngineClient volcanoEngineClient;
     private final TrainingDataRepository trainingDataRepository;
     private final DatabaseService databaseService;
+    private final LLMRouter llmRouter;
 
     /**
-     * 生成 SQL
+     * 生成 SQL - 使用多模型并行生成
+     * 返回包含SQL和解释的结果
      */
-    public List<String> generateSQL(
+    public com.nl2sql.model.dto.SQLResult generateSQLWithExplanation(
             String question,
             List<String> candidateTables,
             Map<String, List<String>> keywords) {
@@ -43,7 +45,7 @@ public class SQLGeneratorService {
             
             if (candidateTables.isEmpty()) {
                 log.error("❌ 候选表列表为空，无法生成SQL");
-                return Collections.emptyList();
+                return null;
             }
             
             // 记录候选表信息
@@ -60,43 +62,401 @@ public class SQLGeneratorService {
             String prompt = buildSQLPrompt(question, candidateTables, relevantPairs);
             log.debug("📝 SQL生成提示词长度: {}字符", prompt.length());
             
-            // 调用 AI 生成 SQL
-            Map<String, Object> response = volcanoEngineClient.generate(prompt, 0.1);
+            // 使用3个模型并行生成SQL（包含解释）
+            Map<String, SQLWithExplanation> modelSQLs = generateSQLWithMultipleModels(prompt);
             
-            if (response.containsKey("error")) {
-                log.warn("⚠️ SQL生成API调用失败，使用降级策略");
-                return generateSQLFallback(question, candidateTables, keywords);
+            if (modelSQLs.isEmpty()) {
+                log.warn("⚠️ 所有模型都未能生成SQL，使用降级策略");
+                List<String> fallbackSQLs = generateSQLFallback(question, candidateTables, keywords);
+                if (!fallbackSQLs.isEmpty()) {
+                    return com.nl2sql.model.dto.SQLResult.builder()
+                        .sql(fallbackSQLs.get(0))
+                        .explanation("降级策略生成的简单SQL")
+                        .model("fallback")
+                        .build();
+                }
+                return null;
             }
             
-            String rawResponse = (String) response.get("response");
+            // 执行SQL并过滤出成功的
+            Map<String, SQLExecutionResult> validSQLs = executeSQLs(modelSQLs);
             
-            if (rawResponse == null || rawResponse.trim().isEmpty()) {
-                log.warn("⚠️ AI响应为空，使用降级策略");
-                return generateSQLFallback(question, candidateTables, keywords);
+            if (validSQLs.isEmpty()) {
+                log.error("❌ 没有SQL执行成功");
+                return null;
             }
             
-            log.info("📥 AI响应长度: {}字符", rawResponse.length());
+            // 使用GLM-4评判最优SQL
+            String bestModelKey = evaluateBestSQL(question, candidateTables, validSQLs);
             
-            // 提取 SQL 语句
-            List<String> sqls = extractSQLStatements(rawResponse);
-            log.info("🔧 提取到 {} 个SQL语句", sqls.size());
-            
-            // SQL 验证和过滤
-            List<String> validSqls = sqls.stream()
-                .filter(this::validateSQLSecurity)
-                .collect(Collectors.toList());
-            
-            log.info("✅ 安全验证通过 {} 个SQL语句", validSqls.size());
-            
-            if (validSqls.isEmpty()) {
-                log.error("❌ 没有通过安全验证的SQL语句");
+            if (bestModelKey != null && validSQLs.containsKey(bestModelKey)) {
+                SQLExecutionResult bestResult = validSQLs.get(bestModelKey);
+                log.info("✅ 选出最优SQL，来自模型: {}", bestModelKey);
+                return com.nl2sql.model.dto.SQLResult.builder()
+                    .sql(bestResult.sql)
+                    .explanation(bestResult.explanation)
+                    .model(bestModelKey)
+                    .build();
             }
             
-            return validSqls.stream().limit(8).collect(Collectors.toList());
+            // 如果评判失败，返回第一个成功的SQL
+            Map.Entry<String, SQLExecutionResult> firstEntry = validSQLs.entrySet().iterator().next();
+            log.info("⚠️ SQL评判失败，返回第一个成功的SQL，来自模型: {}", firstEntry.getKey());
+            return com.nl2sql.model.dto.SQLResult.builder()
+                .sql(firstEntry.getValue().sql)
+                .explanation(firstEntry.getValue().explanation)
+                .model(firstEntry.getKey())
+                .build();
             
         } catch (Exception e) {
             log.error("❌ 生成SQL错误: {}", e.getMessage(), e);
-            return Collections.emptyList();
+            return null;
+        }
+    }
+    
+    /**
+     * 生成 SQL - 兼容旧接口
+     */
+    public List<String> generateSQL(
+            String question,
+            List<String> candidateTables,
+            Map<String, List<String>> keywords) {
+        
+        com.nl2sql.model.dto.SQLResult result = generateSQLWithExplanation(question, candidateTables, keywords);
+        if (result != null && result.getSql() != null) {
+            return List.of(result.getSql());
+        }
+        return Collections.emptyList();
+    }
+    
+    /**
+     * SQL和解释的内部类
+     */
+    private static class SQLWithExplanation {
+        String sql;
+        String explanation;
+        
+        SQLWithExplanation(String sql, String explanation) {
+            this.sql = sql;
+            this.explanation = explanation;
+        }
+    }
+    
+    /**
+     * 使用多个模型并行生成SQL（包含解释）
+     */
+    private Map<String, SQLWithExplanation> generateSQLWithMultipleModels(String prompt) {
+        Map<String, com.nl2sql.client.LLMClient> sqlClients = llmRouter.getSQLGenerationClients();
+        
+        log.info("🔧 使用 {} 个模型并行生成SQL", sqlClients.size());
+        
+        // 使用CompletableFuture实现真正的并行执行
+        List<java.util.concurrent.CompletableFuture<Map.Entry<String, SQLWithExplanation>>> futures = new ArrayList<>();
+        
+        for (Map.Entry<String, com.nl2sql.client.LLMClient> entry : sqlClients.entrySet()) {
+            String modelKey = entry.getKey();
+            com.nl2sql.client.LLMClient client = entry.getValue();
+            
+            if (client == null || !client.isAvailable()) {
+                log.warn("⚠️ 模型 {} 不可用，跳过", modelKey);
+                continue;
+            }
+            
+            // 为每个模型创建异步任务
+            java.util.concurrent.CompletableFuture<Map.Entry<String, SQLWithExplanation>> future = 
+                java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                    try {
+                        log.info("📤 [{}] 开始生成SQL", modelKey);
+                        long startTime = System.currentTimeMillis();
+                        
+                        Map<String, Object> response = client.generate(prompt, 0.1);
+                        
+                        long duration = System.currentTimeMillis() - startTime;
+                        log.info("⏱️ [{}] 生成耗时: {}ms", modelKey, duration);
+                        
+                        if (response.containsKey("error")) {
+                            log.warn("⚠️ [{}] SQL生成失败: {}", modelKey, response.get("error"));
+                            return null;
+                        }
+                        
+                        String rawResponse = (String) response.get("response");
+                        if (rawResponse == null || rawResponse.trim().isEmpty()) {
+                            log.warn("⚠️ [{}] AI响应为空", modelKey);
+                            return null;
+                        }
+                        
+                        log.debug("📄 [{}] 原始响应: {}", modelKey, rawResponse);
+                        
+                        // 提取SQL和解释
+                        SQLWithExplanation sqlWithExplanation = extractSQLAndExplanation(rawResponse);
+                        
+                        if (sqlWithExplanation != null && sqlWithExplanation.sql != null) {
+                            if (validateSQLSecurity(sqlWithExplanation.sql)) {
+                                log.info("✅ [{}] 成功生成SQL和解释", modelKey);
+                                return new java.util.AbstractMap.SimpleEntry<>(modelKey, sqlWithExplanation);
+                            } else {
+                                log.warn("⚠️ [{}] SQL未通过安全验证", modelKey);
+                            }
+                        } else {
+                            log.warn("⚠️ [{}] 未能提取SQL", modelKey);
+                        }
+                        
+                    } catch (Exception e) {
+                        log.error("❌ [{}] 生成SQL异常: {}", modelKey, e.getMessage());
+                    }
+                    return null;
+                });
+            
+            futures.add(future);
+        }
+        
+        // 等待所有任务完成
+        java.util.concurrent.CompletableFuture<Void> allFutures = 
+            java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0]));
+        
+        try {
+            // 设置超时时间为3分钟
+            allFutures.get(180, java.util.concurrent.TimeUnit.SECONDS);
+        } catch (java.util.concurrent.TimeoutException e) {
+            log.warn("⚠️ 部分模型生成超时，使用已完成的结果");
+        } catch (Exception e) {
+            log.error("❌ 等待模型生成时出错: {}", e.getMessage());
+        }
+        
+        // 收集结果
+        Map<String, SQLWithExplanation> results = new HashMap<>();
+        for (java.util.concurrent.CompletableFuture<Map.Entry<String, SQLWithExplanation>> future : futures) {
+            try {
+                if (future.isDone() && !future.isCompletedExceptionally()) {
+                    Map.Entry<String, SQLWithExplanation> result = future.get();
+                    if (result != null) {
+                        results.put(result.getKey(), result.getValue());
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("跳过失败的任务");
+            }
+        }
+        
+        log.info("📊 共生成 {} 个有效SQL", results.size());
+        return results;
+    }
+    
+    /**
+     * 从响应中提取SQL和解释
+     * 格式：```sql\nSELECT...\n```\n```解释\n...\n```
+     */
+    private SQLWithExplanation extractSQLAndExplanation(String response) {
+        try {
+            // 提取SQL
+            List<String> sqls = extractSQLStatements(response);
+            if (sqls.isEmpty()) {
+                return null;
+            }
+            String sql = sqls.get(0);
+            
+            // 提取解释（在```解释```代码块中）
+            String explanation = "";
+            Pattern explanationPattern = Pattern.compile("```解释\\s*([\\s\\S]*?)```", Pattern.CASE_INSENSITIVE);
+            Matcher matcher = explanationPattern.matcher(response);
+            if (matcher.find()) {
+                explanation = matcher.group(1).trim();
+                log.debug("✅ 提取到解释: {}", explanation.substring(0, Math.min(100, explanation.length())));
+            } else {
+                // 如果没有```解释```块，尝试提取SQL代码块后的文本
+                int sqlEndIndex = response.lastIndexOf("```");
+                if (sqlEndIndex > 0 && sqlEndIndex < response.length() - 3) {
+                    String afterSQL = response.substring(sqlEndIndex + 3).trim();
+                    if (!afterSQL.isEmpty() && afterSQL.length() < 1000) {
+                        explanation = afterSQL;
+                        log.debug("✅ 从SQL后提取到解释: {}", explanation.substring(0, Math.min(100, explanation.length())));
+                    }
+                }
+            }
+            
+            return new SQLWithExplanation(sql, explanation);
+            
+        } catch (Exception e) {
+            log.error("❌ 提取SQL和解释时出错: {}", e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * 执行多个SQL并返回成功的结果
+     */
+    private Map<String, SQLExecutionResult> executeSQLs(Map<String, SQLWithExplanation> modelSQLs) {
+        Map<String, SQLExecutionResult> validResults = new HashMap<>();
+        
+        for (Map.Entry<String, SQLWithExplanation> entry : modelSQLs.entrySet()) {
+            String modelKey = entry.getKey();
+            SQLWithExplanation sqlWithExplanation = entry.getValue();
+            String sql = sqlWithExplanation.sql;
+            String explanation = sqlWithExplanation.explanation;
+            
+            try {
+                log.info("🔍 [{}] 执行SQL测试", modelKey);
+                Map<String, Object> result = executeSQLEnhanced(sql, 10);  // 只取10条测试
+                
+                if (Boolean.TRUE.equals(result.get("success"))) {
+                    @SuppressWarnings("unchecked")
+                    List<Map<String, Object>> results = (List<Map<String, Object>>) result.get("results");
+                    validResults.put(modelKey, new SQLExecutionResult(sql, explanation, results));
+                    log.info("✅ [{}] SQL执行成功，返回 {} 行", modelKey, results.size());
+                } else {
+                    log.warn("⚠️ [{}] SQL执行失败: {}", modelKey, result.get("error"));
+                }
+                
+            } catch (Exception e) {
+                log.error("❌ [{}] SQL执行异常: {}", modelKey, e.getMessage());
+            }
+        }
+        
+        return validResults;
+    }
+    
+    /**
+     * 使用GLM-4评判最优SQL
+     * 返回最优SQL的模型key
+     */
+    private String evaluateBestSQL(String question, List<String> candidateTables, 
+                                   Map<String, SQLExecutionResult> validSQLs) {
+        try {
+            String prompt = buildSQLEvaluationPrompt(question, candidateTables, validSQLs);
+            
+            Map<String, Object> response = llmRouter.route(
+                com.nl2sql.enums.LLMTaskType.SQL_EVALUATION, prompt, 0.1
+            );
+            
+            if (response.containsKey("error")) {
+                log.warn("⚠️ SQL评判失败: {}", response.get("error"));
+                return null;
+            }
+            
+            String rawResponse = (String) response.get("response");
+            log.debug("📄 GLM-4评判响应: {}", rawResponse);
+            
+            // 从响应中提取最优SQL的key
+            String bestModelKey = extractBestModelKey(rawResponse, validSQLs.keySet());
+            
+            if (bestModelKey != null) {
+                log.info("🏆 GLM-4选择的最优SQL来自: {}", bestModelKey);
+                return bestModelKey;
+            }
+            
+            log.warn("⚠️ 无法从评判结果中提取最优SQL");
+            return null;
+            
+        } catch (Exception e) {
+            log.error("❌ SQL评判异常: {}", e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * 构建SQL评判提示词
+     */
+    private String buildSQLEvaluationPrompt(String question, List<String> candidateTables,
+                                           Map<String, SQLExecutionResult> validSQLs) {
+        StringBuilder prompt = new StringBuilder();
+        prompt.append("你是一个SQL专家。请根据用户问题和候选表结构，从以下几个SQL中选择最合适的一个。\n\n");
+        
+        prompt.append("【用户问题】\n");
+        prompt.append(question).append("\n\n");
+        
+        // 构建完整的表结构信息（参考buildSQLPrompt）
+        prompt.append("【可用的数据库表结构】\n");
+        int tableCount = 0;
+        
+        for (int i = 0; i < Math.min(15, candidateTables.size()); i++) {
+            String tableLine = candidateTables.get(i);
+            String[] parts = tableLine.split("\\|\\|");
+            
+            if (parts.length >= 4) {
+                String tableName = parts[0];
+                String tableComment = parts[1];
+                
+                prompt.append(String.format("\n表名: %s\n表注释: %s\n", tableName, tableComment));
+                prompt.append("列信息:\n");
+                
+                for (int j = 4; j < parts.length; j += 3) {
+                    if (j + 2 < parts.length) {
+                        String colName = parts[j];
+                        String colComment = parts[j + 1];
+                        String colType = parts[j + 2];
+                        prompt.append(String.format("  - %s (%s): %s\n", colName, colType, colComment));
+                    }
+                }
+                prompt.append("\n");
+                tableCount++;
+            }
+        }
+        
+        if (tableCount == 0) {
+            log.warn("⚠️ 无法解析候选表信息");
+        }
+        
+        prompt.append("【候选SQL】\n");
+        int index = 1;
+        for (Map.Entry<String, SQLExecutionResult> entry : validSQLs.entrySet()) {
+            prompt.append(String.format("SQL%d (%s):\n", index, entry.getKey()));
+            prompt.append(entry.getValue().sql).append("\n");
+            prompt.append(String.format("执行结果：返回 %d 行数据\n\n", entry.getValue().results.size()));
+            index++;
+        }
+        
+        prompt.append("【评判标准】\n");
+        prompt.append("1. SQL语法是否正确\n");
+        prompt.append("2. 是否准确回答了用户问题\n");
+        prompt.append("3. 是否使用了正确的表和列\n");
+        prompt.append("4. 查询逻辑是否合理\n");
+        prompt.append("5. 是否有不必要的复杂度\n\n");
+        
+        prompt.append("【输出格式】\n");
+        prompt.append("请直接输出最优SQL的编号和模型名称，格式如下：\n");
+        prompt.append("最优SQL: SQL1 (deepseek-v3-1)\n");
+        prompt.append("理由: [简要说明选择理由]\n");
+        
+        return prompt.toString();
+    }
+    
+    /**
+     * 从评判响应中提取最优模型key
+     */
+    private String extractBestModelKey(String response, Set<String> modelKeys) {
+        // 尝试匹配模型key
+        for (String key : modelKeys) {
+            if (response.contains(key)) {
+                return key;
+            }
+        }
+        
+        // 尝试匹配SQL编号
+        Pattern pattern = Pattern.compile("SQL(\\d+)");
+        Matcher matcher = pattern.matcher(response);
+        if (matcher.find()) {
+            int sqlIndex = Integer.parseInt(matcher.group(1)) - 1;
+            List<String> keyList = new ArrayList<>(modelKeys);
+            if (sqlIndex >= 0 && sqlIndex < keyList.size()) {
+                return keyList.get(sqlIndex);
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * SQL执行结果内部类
+     */
+    private static class SQLExecutionResult {
+        String sql;
+        String explanation;  // SQL解释
+        List<Map<String, Object>> results;
+        
+        SQLExecutionResult(String sql, String explanation, List<Map<String, Object>> results) {
+            this.sql = sql;
+            this.explanation = explanation;
+            this.results = results;
         }
     }
 
@@ -197,6 +557,7 @@ public class SQLGeneratorService {
             1. 优先参考【历史训练数据】中的SQL模式
             2. 必须使用上面提供的真实表名和列名（表名格式：数据库名.表名）
             3. 生成1个高质量SQL方案，用```sql```包围
+            4. 同时生成markdown格式的sql的解释，用```解释```包围
             4. 列名使用中文别名
             5. 注意有的表中有软删除条件（deleted = 0），有的表中没有软删除条件
             6. ⚠️ 如果问题涉及时间（如"今年"、"本月"、"上个月"等），请参考【当前时间信息】生成准确的时间条件

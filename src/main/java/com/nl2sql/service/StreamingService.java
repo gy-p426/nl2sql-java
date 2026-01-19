@@ -147,16 +147,16 @@ public class StreamingService {
             mergedKeywords.put("keywords_cn", new ArrayList<>(new HashSet<>(mergedKeywords.get("keywords_cn"))));
 //            mergedKeywords.put("keywords_en", new ArrayList<>(new HashSet<>(mergedKeywords.get("keywords_en"))));
             
-            // 步骤4: 生成SQL
+            // 步骤4: 生成SQL（包含解释）
             sendProgress(emitter, "sql_generation", "processing", Map.of(
                 "message", "正在生成查询语句..."
             ), startTime);
             
-            List<String> generatedSqls = sqlGeneratorService.generateSQL(
+            com.nl2sql.model.dto.SQLResult sqlResult = sqlGeneratorService.generateSQLWithExplanation(
                 workingQuestion, candidateTables, mergedKeywords
             );
             
-            if (generatedSqls == null || generatedSqls.isEmpty()) {
+            if (sqlResult == null || sqlResult.getSql() == null) {
                 sendProgress(emitter, "sql_generation", "error", Map.of(
                     "message", "未能生成有效的查询语句",
                     "error", "未能生成有效的查询语句"
@@ -165,32 +165,34 @@ public class StreamingService {
                 return;
             }
             
-            String firstSql = generatedSqls.get(0);
+            String firstSql = sqlResult.getSql();
+            String sqlExplanation = sqlResult.getExplanation();
+            String model = sqlResult.getModel();
+            
             String sqlPreview = firstSql;
             String sqlMessage = String.format("成功生成查询语句：%s", sqlPreview);
             
-            sendProgress(emitter, "sql_generation", "completed", Map.of(
-                "message", sqlMessage,
-                "generated_sql", firstSql
-            ), startTime);
+            Map<String, Object> sqlGenerationData = new HashMap<>();
+            sqlGenerationData.put("message", sqlMessage);
+            sqlGenerationData.put("generated_sql", firstSql);
+            sqlGenerationData.put("sql_explanation", sqlExplanation != null ? sqlExplanation : "");
+            sqlGenerationData.put("model", model != null ? model : "");
+            
+            sendProgress(emitter, "sql_generation", "completed", sqlGenerationData, startTime);
             
             // 步骤5: 执行SQL
             sendProgress(emitter, "sql_execution", "processing", Map.of(
                 "message", "正在执行查询语句..."
             ), startTime);
             
-            String successfulSql = null;
+            String successfulSql = firstSql;
             List<Map<String, Object>> successfulResults = new ArrayList<>();
             
-            for (String sql : generatedSqls) {
-                Map<String, Object> execResult = sqlGeneratorService.executeSQLEnhanced(sql, 10000);
-                successfulSql = sql;
-                @SuppressWarnings("unchecked")
-                List<Map<String, Object>> results = (List<Map<String, Object>>) execResult.get("results");
-                if (results != null && !results.isEmpty()) {
-                    successfulResults = results;
-                    break;
-                }
+            Map<String, Object> execResult = sqlGeneratorService.executeSQLEnhanced(firstSql, 10000);
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> results = (List<Map<String, Object>>) execResult.get("results");
+            if (results != null) {
+                successfulResults = results;
             }
             
             String execMessage = String.format("查询语句执行完成，返回 %d 行数据", successfulResults.size());
@@ -216,6 +218,8 @@ public class StreamingService {
             finalResult.put("selected_databases", selectedDatabases);
             finalResult.put("candidate_tables", tableNames.stream().limit(5).collect(Collectors.toList()));
             finalResult.put("generated_sql", successfulSql);
+            finalResult.put("sql_explanation", sqlExplanation != null ? sqlExplanation : "");
+            finalResult.put("model", model != null ? model : "");
             finalResult.put("sql_results", successfulResults);
             finalResult.put("processing_time", processingTime);
             finalResult.put("session_id", newSessionId);

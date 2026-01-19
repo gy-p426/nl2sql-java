@@ -2,8 +2,7 @@ package com.nl2sql.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.nl2sql.config.NL2SQLProperties;
-import lombok.RequiredArgsConstructor;
+import com.nl2sql.config.LLMProperties;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.hc.client5.http.classic.methods.HttpPost;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
@@ -11,37 +10,39 @@ import org.apache.hc.client5.http.impl.classic.CloseableHttpResponse;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.core5.http.ContentType;
 import org.apache.hc.core5.http.io.entity.StringEntity;
-import org.springframework.stereotype.Component;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * 火山引擎 DeepSeek-V3 客户端，只使用v3单模型，暂时淘汰
+ * 通用火山引擎客户端
+ * 支持配置不同的模型
  */
 @Slf4j
-@Component
-@RequiredArgsConstructor
-public class VolcanoEngineClient implements LLMClient {
+public class GenericVolcanoClient implements LLMClient {
 
-    private final NL2SQLProperties properties;
+    private final LLMProperties.ModelConfig config;
     private final ObjectMapper objectMapper;
+    private final String modelKey;
 
-    /**
-     * 生成文本（无上下文）
-     */
+    public GenericVolcanoClient(String modelKey, LLMProperties.ModelConfig config, ObjectMapper objectMapper) {
+        this.modelKey = modelKey;
+        this.config = config;
+        this.objectMapper = objectMapper;
+    }
+
     @Override
     public Map<String, Object> generate(String prompt, Double temperature) {
         try {
-            log.info("📤 向AI模型发送请求 - 模型: {}, 温度: {}", 
-                properties.getVolcanoEngine().getModel(), temperature);
-            log.debug("📝 发送的提示词: {}",
-                prompt.length() > 200 ? prompt.substring(0, 200) + "..." : prompt);
-//            log.debug("📝 发送的提示词: {}", prompt);
+            log.info("📤 [{}] 向AI模型发送请求 - 模型: {}, 温度: {}", 
+                modelKey, config.getModel(), temperature);
+//            log.debug("📝 [{}] 发送的提示词: {}", modelKey, prompt);
+            log.debug("📝 [{}]发送的提示词: {}", modelKey,
+                    prompt.length() > 200 ? prompt.substring(0, 200) + "..." : prompt);
 
             Map<String, Object> requestBody = new HashMap<>();
-            requestBody.put("model", properties.getVolcanoEngine().getModel());
+            requestBody.put("model", config.getModel());
             requestBody.put("messages", List.of(
                 Map.of("role", "user", "content", prompt)
             ));
@@ -49,32 +50,31 @@ public class VolcanoEngineClient implements LLMClient {
 
             String response = sendRequest(requestBody);
             
-            log.info("📥 收到AI模型响应 - 长度: {}字符", response.length());
-            log.debug("📄 AI响应内容: {}", response);
+            log.info("📥 [{}] 收到AI模型响应 - 长度: {}字符", modelKey, response.length());
+            log.debug("📄 [{}] AI响应内容: {}", modelKey, response);
 
             return Map.of(
                 "response", response,
-                "model", properties.getVolcanoEngine().getModel()
+                "model", config.getModel(),
+                "modelKey", modelKey
             );
         } catch (Exception e) {
-            log.error("❌ 火山引擎API调用错误: {}", e.getMessage());
+            log.error("❌ [{}] 火山引擎API调用错误: {}", modelKey, e.getMessage());
             return Map.of(
                 "response", "",
-                "model", properties.getVolcanoEngine().getModel(),
+                "model", config.getModel(),
+                "modelKey", modelKey,
                 "error", e.getMessage()
             );
         }
     }
 
-    /**
-     * 发送HTTP请求到火山引擎API
-     */
     private String sendRequest(Map<String, Object> requestBody) throws Exception {
         try (CloseableHttpClient httpClient = HttpClients.createDefault()) {
-            String url = properties.getVolcanoEngine().getBaseUrl() + "/chat/completions";
+            String url = config.getBaseUrl() + "/chat/completions";
             HttpPost httpPost = new HttpPost(url);
             
-            httpPost.setHeader("Authorization", "Bearer " + properties.getVolcanoEngine().getApiKey());
+            httpPost.setHeader("Authorization", "Bearer " + config.getApiKey());
             httpPost.setHeader("Content-Type", "application/json");
             
             String jsonBody = objectMapper.writeValueAsString(requestBody);
@@ -97,15 +97,15 @@ public class VolcanoEngineClient implements LLMClient {
             }
         }
     }
-    
+
     @Override
     public String getModelName() {
-        return properties.getVolcanoEngine().getModel();
+        return config.getModel();
     }
-    
+
     @Override
     public boolean isAvailable() {
-        return properties.getVolcanoEngine().getApiKey() != null 
-            && !properties.getVolcanoEngine().getApiKey().isEmpty();
+        return config.getEnabled() != null && config.getEnabled()
+            && config.getApiKey() != null && !config.getApiKey().isEmpty();
     }
 }
