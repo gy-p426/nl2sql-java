@@ -101,7 +101,7 @@ public class LLMRouter {
         Map<String, LLMClient> sqlClients = new HashMap<>();
         sqlClients.put("deepseek-v3-1", clientCache.get("deepseek-v3-1"));
         sqlClients.put("deepseek-v3-2-sql", clientCache.get("deepseek-v3-2-sql"));
-        sqlClients.put("doubao-code", clientCache.get("doubao-code"));
+//        sqlClients.put("doubao-code", clientCache.get("doubao-code"));
         return sqlClients;
     }
 }

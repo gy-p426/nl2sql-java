@@ -185,7 +185,7 @@ public class SQLGeneratorService {
                             return null;
                         }
                         
-                        log.debug("📄 [{}] 原始响应: {}", modelKey, rawResponse);
+//                        log.debug("📄 [{}] 原始响应: {}", modelKey, rawResponse);
                         
                         // 提取SQL和解释
                         SQLWithExplanation sqlWithExplanation = extractSQLAndExplanation(rawResponse);
@@ -210,31 +210,62 @@ public class SQLGeneratorService {
             futures.add(future);
         }
         
-        // 等待所有任务完成
+        // 如果没有任务，直接返回空结果
+        if (futures.isEmpty()) {
+            log.warn("⚠️ 没有可用的SQL生成模型");
+            return new HashMap<>();
+        }
+        
+        // 等待所有任务完成或超时
         java.util.concurrent.CompletableFuture<Void> allFutures = 
             java.util.concurrent.CompletableFuture.allOf(futures.toArray(new java.util.concurrent.CompletableFuture[0]));
         
+        boolean completedSuccessfully = false;
         try {
             // 设置超时时间为3分钟
             allFutures.get(180, java.util.concurrent.TimeUnit.SECONDS);
+            completedSuccessfully = true;
+            log.info("✅ 所有模型生成任务已完成");
         } catch (java.util.concurrent.TimeoutException e) {
-            log.warn("⚠️ 部分模型生成超时，使用已完成的结果");
+            log.warn("⚠️ 部分模型生成超时（超过180秒），取消未完成的任务");
+            // 取消所有未完成的任务
+            for (java.util.concurrent.CompletableFuture<Map.Entry<String, SQLWithExplanation>> future : futures) {
+                if (!future.isDone()) {
+                    future.cancel(true);
+                    log.debug("🛑 已取消未完成的任务");
+                }
+            }
+        } catch (java.util.concurrent.CancellationException e) {
+            log.warn("⚠️ 任务被取消: {}", e.getMessage());
         } catch (Exception e) {
             log.error("❌ 等待模型生成时出错: {}", e.getMessage());
+            // 发生异常时，取消所有未完成的任务
+            for (java.util.concurrent.CompletableFuture<Map.Entry<String, SQLWithExplanation>> future : futures) {
+                if (!future.isDone()) {
+                    future.cancel(true);
+                }
+            }
         }
         
-        // 收集结果
+        // 收集结果 - 只收集已完成且成功的任务
         Map<String, SQLWithExplanation> results = new HashMap<>();
         for (java.util.concurrent.CompletableFuture<Map.Entry<String, SQLWithExplanation>> future : futures) {
             try {
-                if (future.isDone() && !future.isCompletedExceptionally()) {
-                    Map.Entry<String, SQLWithExplanation> result = future.get();
+                // 检查任务是否已完成且没有异常
+                if (future.isDone() && !future.isCompletedExceptionally() && !future.isCancelled()) {
+                    // 使用 getNow(null) 避免阻塞，因为任务已完成
+                    Map.Entry<String, SQLWithExplanation> result = future.getNow(null);
                     if (result != null) {
                         results.put(result.getKey(), result.getValue());
+                        log.debug("✅ 收集到模型 {} 的结果", result.getKey());
                     }
+                } else if (future.isCompletedExceptionally()) {
+                    log.debug("⚠️ 任务异常完成，跳过");
+                } else if (future.isCancelled()) {
+                    log.debug("⚠️ 任务被取消，跳过");
                 }
             } catch (Exception e) {
-                log.debug("跳过失败的任务");
+                log.debug("⚠️ 收集结果时出错: {}", e.getMessage());
             }
         }
         

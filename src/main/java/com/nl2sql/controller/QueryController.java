@@ -88,6 +88,8 @@ public class QueryController {
                 .success((Boolean) result.get("success"))
                 .question((String) result.get("question"))
                 .sql((String) result.get("sql"))
+                .sqlExplanation((String) result.get("sqlExplanation"))
+                .model((String) result.get("model"))
                 .results((List<Map<String, Object>>) result.get("results"))
                 .resultCount((Integer) result.get("resultCount"))
                 .executionTime((Long) result.get("executionTime"))

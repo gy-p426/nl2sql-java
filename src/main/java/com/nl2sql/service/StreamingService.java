@@ -19,6 +19,7 @@ import java.util.stream.Collectors;
 public class StreamingService {
 
     private final SessionService sessionService;
+    private final NL2SQLService nl2sqlService;
     private final DatabaseService databaseService;
     private final KeywordExtractorService keywordExtractorService;
     private final SchemaService schemaService;
@@ -27,6 +28,7 @@ public class StreamingService {
 
     /**
      * 流式处理查询 - 完全按照Python的process_query_stream实现
+     * 支持用户通过关闭连接来取消查询
      */
     public void processQueryStream(String question, String windowId, String sessionId, SseEmitter emitter) {
         long startTime = System.currentTimeMillis();
@@ -37,7 +39,8 @@ public class StreamingService {
                 "message", "正在解析问题意图..."
             ), startTime);
             
-            Map<String, Object> mergeResult = sessionService.mergeContinuousQuestion(
+            // 调用 NL2SQLService 的追问判断方法（真正调用 LLM）
+            Map<String, Object> mergeResult = nl2sqlService.mergeContinuousQuestion(
                 question, windowId, sessionId
             );
             
@@ -140,7 +143,7 @@ public class StreamingService {
             
             for (Map<String, List<String>> dbKeywords : databaseKeywords.values()) {
                 mergedKeywords.get("keywords_cn").addAll(dbKeywords.getOrDefault("keywords_cn", new ArrayList<>()));
-//                mergedKeywords.get("keywords_en").addAll(dbKeywords.getOrDefault("keywords_en", new ArrayList<>()));
+//                mergedKeywords.get("keywords_en").addAll(dbKeywords.getOrDefault("keywords_en", new ArrayList<>());
             }
             
             // 去重
@@ -228,8 +231,13 @@ public class StreamingService {
             sendProgress(emitter, "completed", "success", finalResult, startTime);
             
             emitter.complete();
-            log.info("✅ 流式查询处理完成 - 耗时: {}秒", processingTime);
+            log.info("✅ 流式查询处理完成 - 耗时: {}秒\n\n", processingTime);
             
+        } catch (IOException e) {
+            // 捕获连接断开异常（用户取消查询）
+            log.info("🛑 客户端已断开连接，停止处理 - {}", e.getMessage());
+            // 不需要做任何处理，直接返回
+            return;
         } catch (Exception e) {
             double processingTime = (System.currentTimeMillis() - startTime) / 1000.0;
             log.error("❌ 流式查询处理失败: {}", e.getMessage(), e);
@@ -239,8 +247,8 @@ public class StreamingService {
                     "error", e.getMessage(),
                     "processing_time", processingTime
                 ), startTime);
-            } catch (Exception ex) {
-                log.error("发送错误事件失败", ex);
+            } catch (IOException ex) {
+                log.warn("⚠️ 发送错误事件失败，连接已断开");
             }
             emitter.completeWithError(e);
         }
@@ -248,6 +256,7 @@ public class StreamingService {
 
     /**
      * 发送进度信息 - 完全按照Python格式
+     * 如果连接已断开，会抛出IOException，由调用者处理
      */
     private void sendProgress(SseEmitter emitter, String step, String status, 
                               Map<String, Object> data, long startTime) throws IOException {
@@ -261,7 +270,12 @@ public class StreamingService {
         }
         
         String jsonData = objectMapper.writeValueAsString(progress);
-        emitter.send(SseEmitter.event()
-            .data(jsonData));
+        
+        try {
+            emitter.send(SseEmitter.event().data(jsonData));
+        } catch (IOException e) {
+            // 连接已断开，抛出异常让调用者处理
+            throw e;
+        }
     }
 }

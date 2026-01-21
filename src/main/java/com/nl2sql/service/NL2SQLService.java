@@ -136,13 +136,15 @@ public class NL2SQLService {
     /**
      * 合并连续问题
      */
-    private Map<String, Object> mergeContinuousQuestion(
+    public Map<String, Object> mergeContinuousQuestion(
             String newQuestion, String windowId, String sessionId) {
         
         String previousQuestion = null;
+        boolean isSessionReferenced = false;
         
         if (sessionId != null) {
             previousQuestion = sessionService.getSessionQuestion(sessionId, windowId);
+            isSessionReferenced = true;
         } else {
             previousQuestion = sessionService.getLatestQuestionFromWindow(windowId);
         }
@@ -162,7 +164,7 @@ public class NL2SQLService {
             newQuestion.substring(0, Math.min(50, newQuestion.length())));
         
         // 使用 AI 判断是否连续
-        String prompt = buildContinuousQuestionPrompt(previousQuestion, newQuestion);
+        String prompt = buildContinuousQuestionPrompt(previousQuestion, newQuestion, isSessionReferenced);
         Map<String, Object> response = llmRouter.route(
             com.nl2sql.enums.LLMTaskType.CONTINUOUS_QUESTION, prompt, 0.1
         );
@@ -324,7 +326,17 @@ public class NL2SQLService {
         return prompt.toString();
     }
 
-    private String buildContinuousQuestionPrompt(String previous, String current) {
+    private String buildContinuousQuestionPrompt(String previous, String current, boolean isSessionReferenced) {
+        String sessionHint = "";
+        if (isSessionReferenced) {
+            sessionHint = """
+                
+                【重要提示】
+                ⚠️ 用户明确引用了之前的会话（sessionId），这表明新问题一定与上一个问题相关。
+                在这种情况下，你应该更倾向于判断为连续问题，并生成合并后的完整问题。
+                """;
+        }
+        
         return String.format("""
             你是一个智能问题分析助手。请判断新问题是否是对上一个问题的追问（连续问题）。
             
@@ -332,7 +344,7 @@ public class NL2SQLService {
             %s
             
             【新问题】
-            %s
+            %s%s
             
             【判断规则 - 连续问题的特征】
             1. 新问题包含指代词（"他们"、"这些"、"其中"、"那些"、"以上"等）
@@ -356,7 +368,7 @@ public class NL2SQLService {
             }
             
             请仔细分析并输出：
-            """, previous, current);
+            """, previous, current, sessionHint);
     }
 
     /**
