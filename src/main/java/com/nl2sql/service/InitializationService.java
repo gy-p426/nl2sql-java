@@ -102,6 +102,7 @@ public class InitializationService implements CommandLineRunner {
 
     /**
      * 生成数据库概览
+     * 只保留表注释，不加入表名
      */
     @Transactional
     private void generateDatabaseOverviews(List<DatabaseHostConfig> hostConfigs) {
@@ -124,7 +125,8 @@ public class InitializationService implements CommandLineRunner {
                         for (DatabaseSchema schema : schemas) {
                             String tableName = schema.getTableName();
                             String tableComment = schema.getTableComment() != null ? schema.getTableComment() : "无注释";
-                            tableSummary.append(String.format("%s(%s), ", tableName, tableComment));
+//                            tableSummary.append(String.format("%s(%s), ", tableName, tableComment));
+                            tableSummary.append(String.format("%s, ", tableComment)); // 只显示表注释
                         }
                         
                         if (tableSummary.length() > 0) {

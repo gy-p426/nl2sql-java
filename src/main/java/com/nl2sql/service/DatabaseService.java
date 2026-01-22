@@ -196,7 +196,7 @@ public class DatabaseService {
                 %s
                 
                 请仔细分析后，只返回与问题相关的数据库名（从"数据库名："后面提取，多个数据库用逗号分隔）：
-                """, dbOverview.toString(), question);
+                """, dbOverview, question);
             
             // 4. 调用AI模型
             Map<String, Object> response = callAIModel(prompt, 0.1);

@@ -728,7 +728,6 @@ public class SQLGeneratorService {
 
         try {
             // 1. 添加LIMIT限制
-            String originalSql = sql;
             if (!sql.toUpperCase().contains("LIMIT")) {
                 sql = sql.replaceAll(";\\s*$", "") + " LIMIT " + limit;
                 log.debug("🔧 添加LIMIT限制: {}", limit);
