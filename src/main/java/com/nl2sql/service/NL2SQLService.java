@@ -37,16 +37,24 @@ public class NL2SQLService {
     /**
      * 处理查询
      */
-        public QueryResponse processQuery(String question, String windowId, String sessionId) {
+        public QueryResponse processQuery(String question, String windowId, String sessionId, Integer userId) {
+
+            if(userId == null) {
+                return QueryResponse.builder()
+                        .success(false)
+                        .error("用户账号信息为空")
+                        .build();
+            }
+
         long startTime = System.currentTimeMillis();
         
         try {
             // 1. 保存问题到 session
-            String newSessionId = sessionService.saveQuestionToSession(question, windowId);
+            String newSessionId = sessionService.saveQuestionToSession(question, windowId, userId);
             
             // 2. 判断是否为连续问题
             Map<String, Object> continuousResult = mergeContinuousQuestion(
-                question, windowId, sessionId
+                question, windowId, userId, sessionId
             );
             
             boolean isContinuous = (boolean) continuousResult.getOrDefault("is_continuous", false);
@@ -137,7 +145,7 @@ public class NL2SQLService {
      * 合并连续问题
      */
     public Map<String, Object> mergeContinuousQuestion(
-            String newQuestion, String windowId, String sessionId) {
+            String newQuestion, String windowId, Integer userId, String sessionId) {
         
         String previousQuestion = null;
         boolean isSessionReferenced = false;
@@ -146,7 +154,7 @@ public class NL2SQLService {
             previousQuestion = sessionService.getSessionQuestion(sessionId, windowId);
             isSessionReferenced = true;
         } else {
-            previousQuestion = sessionService.getLatestQuestionFromWindow(windowId);
+            previousQuestion = sessionService.getLatestQuestionFromWindow(windowId, userId);
         }
         
         if (previousQuestion == null) {
@@ -374,12 +382,12 @@ public class NL2SQLService {
     /**
      * 处理数据库查询（第一阶段）
      */
-    public Map<String, Object> processQueryDb(String question, String windowId) {
+    public Map<String, Object> processQueryDb(String question, String windowId, Integer userId) {
         long startTime = System.currentTimeMillis();
         
         try {
             // 1. 保存问题到 session
-            String newSessionId = sessionService.saveQuestionToSession(question, windowId);
+            String newSessionId = sessionService.saveQuestionToSession(question, windowId, userId);
             
             // 3. 选择数据库
             List<String> selectedDatabases = selectDatabases(question);

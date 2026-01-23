@@ -17,6 +17,8 @@ public class QueryRequest {
     private String sessionId;
     
     private Boolean stream = false;
+
+    private Integer userId;
     
     // 手动添加getter方法以解决lombok问题
     public String getQuestion() {
