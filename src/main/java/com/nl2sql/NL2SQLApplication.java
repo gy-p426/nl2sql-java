@@ -11,7 +11,7 @@ import org.springframework.scheduling.annotation.EnableAsync;
  * @author NL2SQL Team
  * @version 4.0
  */
-@SpringBootApplication
+@SpringBootApplication(scanBasePackages = {"com.nl2sql", "com.excelmanage"})
 @EnableCaching
 @EnableAsync
 public class NL2SQLApplication {

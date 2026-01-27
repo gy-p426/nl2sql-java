@@ -30,6 +30,14 @@ spring:
       write-dates-as-timestamps: false
     time-zone: GMT+8
 
+  # 文件上传配置
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: 100MB        # 单个文件最大大小
+      max-request-size: 100MB     # 整个请求最大大小
+      file-size-threshold: 10MB   # 文件写入磁盘的阈值
+
 server:
   port: 8080
   servlet:
@@ -57,6 +65,7 @@ nl2sql:
         - yibin2
         - yibinhumanresources
         - yibinsalary
+        - exceldatabase
       pool:
         maximum-pool-size: 10
         minimum-idle: 5
