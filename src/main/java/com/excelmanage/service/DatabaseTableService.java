@@ -30,7 +30,6 @@ public class DatabaseTableService {
     
     // 表名和列名的合法字符模式
     private static final Pattern VALID_TABLE_NAME = Pattern.compile("^[a-zA-Z_][a-zA-Z0-9_]*$");
-    private static final Pattern VALID_COLUMN_NAME = Pattern.compile("^[a-zA-Z_][a-zA-Z0-9_]*$");
 
     /**
      * 创建数据库表
