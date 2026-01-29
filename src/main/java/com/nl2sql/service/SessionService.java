@@ -278,7 +278,7 @@ public class SessionService {
     /**
      * 判断并合并连续问题 - 完全按照Python实现
      */
-    public Map<String, Object> mergeContinuousQuestion(String newQuestion, String windowId, String selectedSessionId) {
+    public Map<String, Object> mergeContinuousQuestion(String newQuestion, String windowId, Integer userId, String selectedSessionId) {
         try {
             String previousQuestion = null;
             
@@ -301,8 +301,9 @@ public class SessionService {
                 }
             } else {
                 // 获取指定窗口的最近一个问题
-                previousQuestion = getLatestQuestionFromWindow(windowId);
+                previousQuestion = getLatestQuestionFromWindow(windowId, userId);
             }
+
             
             if (previousQuestion == null || previousQuestion.isEmpty()) {
                 // 没有历史问题，直接返回新问题

@@ -13,6 +13,8 @@ public class QueryDbRequest {
     private String question;
     
     private String windowId = "default";
+
+    private Integer userId;
     
     // 手动添加getter方法以解决lombok问题
     public String getQuestion() {

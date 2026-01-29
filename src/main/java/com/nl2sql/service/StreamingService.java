@@ -30,7 +30,7 @@ public class StreamingService {
      * 流式处理查询 - 完全按照Python的process_query_stream实现
      * 支持用户通过关闭连接来取消查询
      */
-    public void processQueryStream(String question, String windowId, String sessionId, SseEmitter emitter) {
+    public void processQueryStream(String question, String windowId, String sessionId, Integer userId, SseEmitter emitter) {
         long startTime = System.currentTimeMillis();
         
         try {
@@ -206,8 +206,8 @@ public class StreamingService {
             ), startTime);
             
             // 步骤6: 保存session
-            String newSessionId = sessionService.saveQuestionToSession(workingQuestion, windowId);
-            
+            String newSessionId = sessionService.saveQuestionToSession(workingQuestion, windowId, userId);
+
             // 计算处理时间
             double processingTime = (System.currentTimeMillis() - startTime) / 1000.0;
             
