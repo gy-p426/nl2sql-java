@@ -194,12 +194,13 @@ public class QueryController {
     @Operation(summary = "判断是否为追问（连续问题）")
     public ApiResponse<ContinuousQuestionResponse> continuousQuestion(@Valid @RequestBody ContinuousQuestionRequest request) {
         try {
-            log.info("🔍 收到追问判断请求 - 窗口: {}, 问题: {}", 
-                request.getWindowId(), request.getQuestion());
+            log.info("🔍 收到追问判断请求 - 窗口: {}, 用户: {}, 问题: {}", 
+                request.getWindowId(), request.getUserId(), request.getQuestion());
             
             Map<String, Object> result = nl2sqlService.mergeContinuousQuestion(
                 request.getQuestion(),
                 request.getWindowId(),
+                request.getUserId(),
                 request.getSessionId()
             );
             
