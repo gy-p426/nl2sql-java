@@ -165,6 +165,34 @@ public class QueryController {
         return emitter;
     }
 
+    @PostMapping("/contin_question")
+    @Operation(summary = "判断是否为追问（连续问题）")
+    public ApiResponse<ContinuousQuestionResponse> continuousQuestion(@Valid @RequestBody ContinuousQuestionRequest request) {
+        try {
+            log.info("🔍 收到追问判断请求 - 窗口: {}, 问题: {}", 
+                request.getWindowId(), request.getQuestion());
+            
+            Map<String, Object> result = nl2sqlService.mergeContinuousQuestion(
+                request.getQuestion(),
+                request.getWindowId(),
+                request.getSessionId()
+            );
+            
+            ContinuousQuestionResponse response = ContinuousQuestionResponse.builder()
+                .isContinuous((Boolean) result.getOrDefault("is_continuous", false))
+                .mergedQuestion((String) result.getOrDefault("merged_question", request.getQuestion()))
+                .originalQuestion((String) result.getOrDefault("original_question", request.getQuestion()))
+                .previousQuestion((String) result.get("previous_question"))
+                .reason((String) result.getOrDefault("reason", ""))
+                .build();
+            
+            return ApiResponse.success(response);
+        } catch (Exception e) {
+            log.error("❌ 追问判断处理错误: {}", e.getMessage(), e);
+            return ApiResponse.error("追问判断处理失败: " + e.getMessage());
+        }
+    }
+
     @GetMapping("/health")
     @Operation(summary = "健康检查")
     public ApiResponse<String> health() {

@@ -40,31 +40,31 @@ public class StreamingService {
             ), startTime);
             
             // 调用 NL2SQLService 的追问判断方法（真正调用 LLM）
-            Map<String, Object> mergeResult = nl2sqlService.mergeContinuousQuestion(
-                question, windowId, sessionId
-            );
+//            Map<String, Object> mergeResult = nl2sqlService.mergeContinuousQuestion(
+//                question, windowId, sessionId
+//            );
+//
+//            boolean isContinuous = (boolean) mergeResult.getOrDefault("is_continuous", false);
+//            String mergedQuestion = (String) mergeResult.getOrDefault("merged_question", question);
+//            String previousQuestion = (String) mergeResult.get("previous_question");
             
-            boolean isContinuous = (boolean) mergeResult.getOrDefault("is_continuous", false);
-            String mergedQuestion = (String) mergeResult.getOrDefault("merged_question", question);
-            String previousQuestion = (String) mergeResult.get("previous_question");
+//            String intentMessage = String.format(
+//                "用户上一个问题为：%s，本次问题为：%s，%s",
+//                previousQuestion != null ? previousQuestion : "无",
+//                question,
+//                isContinuous ?
+//                    String.format("是对上一个问题的追问，故用户的问题为：%s", mergedQuestion) :
+//                    String.format("不是对上一个问题的追问，故用户的问题为：%s", mergedQuestion)
+//            );
+//
+//            sendProgress(emitter, "intent_analysis", "completed", Map.of(
+//                "message", intentMessage,
+//                "is_continuous", isContinuous,
+//                "merged_question", mergedQuestion,
+//                "previous_question", previousQuestion != null ? previousQuestion : ""
+//            ), startTime);
             
-            String intentMessage = String.format(
-                "用户上一个问题为：%s，本次问题为：%s，%s",
-                previousQuestion != null ? previousQuestion : "无",
-                question,
-                isContinuous ? 
-                    String.format("是对上一个问题的追问，故用户的问题为：%s", mergedQuestion) :
-                    String.format("不是对上一个问题的追问，故用户的问题为：%s", mergedQuestion)
-            );
-            
-            sendProgress(emitter, "intent_analysis", "completed", Map.of(
-                "message", intentMessage,
-                "is_continuous", isContinuous,
-                "merged_question", mergedQuestion,
-                "previous_question", previousQuestion != null ? previousQuestion : ""
-            ), startTime);
-            
-            String workingQuestion = mergedQuestion;
+            String workingQuestion = question;
             
             // 步骤1: 选择相关数据库
             sendProgress(emitter, "database_selection", "processing", Map.of(
@@ -206,7 +206,7 @@ public class StreamingService {
             ), startTime);
             
             // 步骤6: 保存session
-            String newSessionId = sessionService.saveQuestionToSession(mergedQuestion, windowId);
+            String newSessionId = sessionService.saveQuestionToSession(workingQuestion, windowId);
             
             // 计算处理时间
             double processingTime = (System.currentTimeMillis() - startTime) / 1000.0;
@@ -214,10 +214,7 @@ public class StreamingService {
             // 最终结果
             Map<String, Object> finalResult = new HashMap<>();
             finalResult.put("message", "查询处理完成");
-            finalResult.put("original_question", question);
-            finalResult.put("merged_question", mergedQuestion);
-            finalResult.put("is_continuous", isContinuous);
-            finalResult.put("previous_question", previousQuestion != null ? previousQuestion : "");
+            finalResult.put("question", question);
             finalResult.put("selected_databases", selectedDatabases);
             finalResult.put("candidate_tables", tableNames.stream().limit(5).collect(Collectors.toList()));
             finalResult.put("generated_sql", successfulSql);

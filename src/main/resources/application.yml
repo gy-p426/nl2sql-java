@@ -53,10 +53,6 @@ nl2sql:
       port: 3306
       username: root
       password: root
-      databases:
-        - yibin2
-        - yibinhumanresources
-        - yibinsalary
       pool:
         maximum-pool-size: 10
         minimum-idle: 5

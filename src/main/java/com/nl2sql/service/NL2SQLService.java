@@ -44,25 +44,25 @@ public class NL2SQLService {
             // 1. 保存问题到 session
             String newSessionId = sessionService.saveQuestionToSession(question, windowId);
             
-            // 2. 判断是否为连续问题
-            Map<String, Object> continuousResult = mergeContinuousQuestion(
-                question, windowId, sessionId
-            );
-            
-            boolean isContinuous = (boolean) continuousResult.getOrDefault("is_continuous", false);
-            String mergedQuestion = (String) continuousResult.getOrDefault("merged_question", question);
-            
-            log.info("{} 问题类型: {}", 
-                isContinuous ? "🔗" : "🆕", 
-                isContinuous ? "连续问题" : "独立问题");
+//            // 2. 判断是否为连续问题
+//            Map<String, Object> continuousResult = mergeContinuousQuestion(
+//                question, windowId, sessionId
+//            );
+//
+//            boolean isContinuous = (boolean) continuousResult.getOrDefault("is_continuous", false);
+//            String mergedQuestion = (String) continuousResult.getOrDefault("merged_question", question);
+//
+//            log.info("{} 问题类型: {}",
+//                isContinuous ? "🔗" : "🆕",
+//                isContinuous ? "连续问题" : "独立问题");
             
             // 3. 选择数据库
-            List<String> selectedDatabases = selectDatabases(mergedQuestion);
+            List<String> selectedDatabases = selectDatabases(question);
             log.info("📊 选择数据库: {}", selectedDatabases);
             
             // 4. 提取关键词
             Map<String, Map<String, List<String>>> databaseKeywords = 
-                keywordExtractorService.extractKeywords(mergedQuestion, selectedDatabases);
+                keywordExtractorService.extractKeywords(question, selectedDatabases);
             
             // 5. 选择候选表
             log.info("🔍 步骤5: 选择候选表");
@@ -83,7 +83,7 @@ public class NL2SQLService {
             log.info("🔍 步骤6: 生成SQL");
             Map<String, List<String>> mergedKeywords = flattenKeywords(databaseKeywords);
             com.nl2sql.model.dto.SQLResult sqlResult = sqlGeneratorService.generateSQLWithExplanation(
-                mergedQuestion, candidateTables, mergedKeywords
+                    question, candidateTables, mergedKeywords
             );
             
             if (sqlResult == null || sqlResult.getSql() == null) {
@@ -112,8 +112,7 @@ public class NL2SQLService {
                 .success(true)
                 .sessionId(newSessionId)
                 .question(question)
-                .mergedQuestion(mergedQuestion)
-                .isContinuous(isContinuous)
+                .mergedQuestion(question)
                 .selectedDatabases(selectedDatabases)
                 .keywords(mergedKeywords)
                 .sql(sqlResult.getSql())
@@ -233,6 +232,7 @@ public class NL2SQLService {
             
             // 2. 构建数据库选择提示词
             String prompt = buildDatabaseSelectionPrompt(question, overviews);
+            log.info("🔍 数据库选择提示词: {}", prompt);
             
             // 3. 调用AI模型
             Map<String, Object> response = llmRouter.route(
