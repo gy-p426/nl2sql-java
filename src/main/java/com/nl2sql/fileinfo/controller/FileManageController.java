@@ -139,4 +139,32 @@ public class FileManageController {
             response.getWriter().write("{\"success\":false,\"error\":\"" + e.getMessage() + "\"}");
         }
     }
+
+    /**
+     * 仅按文件ID列表查询文件
+     */
+    @GetMapping("/list/ids")
+    @Operation(summary = "按文件ID列表查询", description = "仅传入文件ID数组，返回指定ID对应的文件列表")
+    public ApiResponse<List<FileInfoDTO>> listFilesByIds(
+            @RequestParam(required = false) List<Long> fileIds
+    ) {
+        try {
+            // 1. 调用 Service 层按ID列表查询
+            List<FileInfo> fileInfoList = fileInfoService.listFilesByIds(fileIds);
+
+            // 2. 转换为返回DTO列表（和原有接口保持一致的返回格式）
+            List<FileInfoDTO> fileInfoDTOList = fileInfoList.stream()
+                    .map(fileInfo -> {
+                        FileInfoDTO dto = new FileInfoDTO();
+                        BeanUtils.copyProperties(fileInfo, dto);
+                        return dto;
+                    })
+                    .collect(Collectors.toList());
+
+            // 3. 返回响应结果
+            return ApiResponse.success("按ID列表查询文件成功", fileInfoDTOList);
+        } catch (Exception e) {
+            return ApiResponse.error("按ID列表查询文件失败", e.getMessage());
+        }
+    }
 }

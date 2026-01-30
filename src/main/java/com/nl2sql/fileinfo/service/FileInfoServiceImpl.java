@@ -16,6 +16,7 @@ import jakarta.annotation.Resource;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -24,6 +25,7 @@ import java.net.URLEncoder;
 import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
@@ -207,5 +209,27 @@ public class FileInfoServiceImpl implements FileInfoService {
         } catch (IOException e) {
             throw new RuntimeException("文件流写入失败，无法下载：" + e.getMessage(), e);
         }
+    }
+
+    @Override
+    public List<FileInfo> listFilesByIds(List<Long> fileIds) {
+        // 1. 健壮性处理：若 fileIds 为空/为null，返回空列表（避免查询全表）
+        if (CollectionUtils.isEmpty(fileIds)) {
+            return new ArrayList<>();
+        }
+
+        // 2. 清理无效ID（过滤 <= 0 的ID，避免无效查询）
+        List<Long> validFileIds = fileIds.stream()
+                .filter(fileId -> fileId != null && fileId > 0)
+                .distinct() // 去重，避免重复查询相同ID
+                .toList();
+
+        // 3. 若清理后无有效ID，返回空列表
+        if (CollectionUtils.isEmpty(validFileIds)) {
+            return new ArrayList<>();
+        }
+
+        // 4. 调用 Repository 层查询指定ID列表的文件
+        return fileInfoRepository.findByFileIdIn(validFileIds);
     }
 }

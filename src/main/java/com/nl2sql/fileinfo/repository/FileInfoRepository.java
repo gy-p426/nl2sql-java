@@ -35,4 +35,6 @@ public interface FileInfoRepository extends JpaRepository<FileInfo, Long> {
      * @return 满足双重条件的文件列表
      */
     List<FileInfo> findByUploadUserIdAndFileSuffix(Long uploadUserId, String fileSuffix);
+
+    List<FileInfo> findByFileIdIn(List<Long> fileIds);
 }

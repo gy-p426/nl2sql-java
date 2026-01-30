@@ -60,4 +60,6 @@ public interface FileInfoService {
          * @throws IOException 流操作异常
          */
         void downloadFileById(Long fileId, HttpServletResponse response) throws IOException;
+
+        List<FileInfo> listFilesByIds(List<Long> fileIds);
 }
