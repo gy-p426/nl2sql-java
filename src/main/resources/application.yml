@@ -172,3 +172,6 @@ nl2sql:
   
   # 测试图片目录
   test-images-dir: test_images
+
+file-upload:
+    root-path: /Users/ayaki/MyFile/Tmp/upload/
