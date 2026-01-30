@@ -5,8 +5,8 @@ spring:
   # nl2sql数据库配置（用于存储系统数据）
   datasource:
     url: jdbc:mysql://localhost:3306/nl2sql?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-    username: root
-    password: root
+    username: gyp
+    password: gyp
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 10
@@ -59,13 +59,8 @@ nl2sql:
     - name: db1
       host: localhost
       port: 3306
-      username: root
-      password: root
-      databases:
-        - yibin2
-        - yibinhumanresources
-        - yibinsalary
-        - exceldatabase
+      username: gyp
+      password: gyp
       pool:
         maximum-pool-size: 10
         minimum-idle: 5
