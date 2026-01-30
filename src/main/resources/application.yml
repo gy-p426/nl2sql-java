@@ -174,4 +174,4 @@ nl2sql:
   test-images-dir: test_images
 
 file-upload:
-    root-path: /Users/ayaki/MyFile/Tmp/upload/
+    root-path: /home/gyp/nl2sql/nl2sql-java/upload/
