@@ -209,26 +209,26 @@ public class StreamingService {
             String newSessionId = sessionService.saveQuestionToSession(workingQuestion, windowId, userId);
 
             // 计算处理时间
-            double processingTime = (System.currentTimeMillis() - startTime) / 1000.0;
+//            double processingTime = (System.currentTimeMillis() - startTime) / 1000.0;
+//
+//            // 最终结果
+//            Map<String, Object> finalResult = new HashMap<>();
+//            finalResult.put("message", "查询处理完成");
+//            finalResult.put("question", question);
+//            finalResult.put("selected_databases", selectedDatabases);
+//            finalResult.put("candidate_tables", tableNames.stream().limit(5).collect(Collectors.toList()));
+//            finalResult.put("generated_sql", successfulSql);
+//            finalResult.put("sql_explanation", sqlExplanation != null ? sqlExplanation : "");
+//            finalResult.put("model", model != null ? model : "");
+//            finalResult.put("sql_results", successfulResults);
+//            finalResult.put("processing_time", processingTime);
+//            finalResult.put("session_id", newSessionId);
+//            finalResult.put("used_session_id", sessionId != null ? sessionId : "");
             
-            // 最终结果
-            Map<String, Object> finalResult = new HashMap<>();
-            finalResult.put("message", "查询处理完成");
-            finalResult.put("question", question);
-            finalResult.put("selected_databases", selectedDatabases);
-            finalResult.put("candidate_tables", tableNames.stream().limit(5).collect(Collectors.toList()));
-            finalResult.put("generated_sql", successfulSql);
-            finalResult.put("sql_explanation", sqlExplanation != null ? sqlExplanation : "");
-            finalResult.put("model", model != null ? model : "");
-            finalResult.put("sql_results", successfulResults);
-            finalResult.put("processing_time", processingTime);
-            finalResult.put("session_id", newSessionId);
-            finalResult.put("used_session_id", sessionId != null ? sessionId : "");
-            
-            sendProgress(emitter, "completed", "success", finalResult, startTime);
+//            sendProgress(emitter, "completed", "success", finalResult, startTime);
             
             emitter.complete();
-            log.info("✅ 流式查询处理完成 - 耗时: {}秒\n\n", processingTime);
+//            log.info("✅ 流式查询处理完成 - 耗时: {}秒\n\n", processingTime);
             
         } catch (IOException e) {
             // 捕获连接断开异常（用户取消查询）

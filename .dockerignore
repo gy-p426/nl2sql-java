@@ -1,0 +1,36 @@
+# Git 文件
+.git
+.gitignore
+
+# IDE 文件
+.idea
+.vscode
+*.iml
+
+# 构建文件
+target/
+*.class
+
+# 日志文件
+logs/
+*.log
+
+# 前端文件（不打包进镜像）
+frontend/
+*.html
+*.css
+*.js
+*.vue
+node_modules/
+
+# 文档文件
+*.md
+docs/
+
+# 测试文件
+src/test/
+
+# Docker 文件
+Dockerfile
+docker-compose.yml
+.dockerignore
