@@ -1,9 +1,12 @@
 package com.nl2sql.controller;
 
 import com.nl2sql.model.dto.ApiResponse;
+import com.nl2sql.model.dto.SaveQuestionRequest;
+import com.nl2sql.model.dto.SaveQuestionResponse;
 import com.nl2sql.service.SessionService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -55,6 +58,36 @@ public class SessionController {
         } catch (Exception e) {
             log.error("❌ 清除session缓存错误: {}", e.getMessage());
             return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    @PostMapping("/save-question")
+    @Operation(summary = "保存问题到Session", description = "将用户问题保存到Session历史记录中，用于后续的连续问题判断")
+    public ApiResponse<SaveQuestionResponse> saveQuestion(@Valid @RequestBody SaveQuestionRequest request) {
+        try {
+            log.info("💾 收到保存问题请求 - 窗口: {}, 用户: {}, 问题: {}", 
+                request.getWindowId(), request.getUserId(), request.getQuestion());
+            
+            // 保存问题到session
+            String sessionId = sessionService.saveQuestionToSession(
+                request.getQuestion(),
+                request.getWindowId(),
+                request.getUserId()
+            );
+            
+            // 构建响应
+            SaveQuestionResponse response = SaveQuestionResponse.builder()
+                .sessionId(sessionId)
+                .question(request.getQuestion())
+                .windowId(request.getWindowId())
+                .userId(request.getUserId())
+                .timestamp(System.currentTimeMillis())
+                .build();
+            
+            return ApiResponse.success("问题保存成功", response);
+        } catch (Exception e) {
+            log.error("❌ 保存问题错误: {}", e.getMessage(), e);
+            return ApiResponse.error("保存问题失败: " + e.getMessage());
         }
     }
 }

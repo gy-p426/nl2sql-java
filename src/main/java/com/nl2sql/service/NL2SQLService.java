@@ -50,7 +50,7 @@ public class NL2SQLService {
         
         try {
             // 1. 保存问题到 session
-            String newSessionId = sessionService.saveQuestionToSession(question, windowId, userId);
+//            String newSessionId = sessionService.saveQuestionToSession(question, windowId, userId);
             
 //            // 2. 判断是否为连续问题
 //            Map<String, Object> continuousResult = mergeContinuousQuestion(
@@ -118,7 +118,7 @@ public class NL2SQLService {
             
             return QueryResponse.builder()
                 .success(true)
-                .sessionId(newSessionId)
+//                .sessionId(newSessionId)
                 .question(question)
                 .mergedQuestion(question)
                 .selectedDatabases(selectedDatabases)
@@ -353,18 +353,7 @@ public class NL2SQLService {
             【新问题】
             %s%s
             
-            【判断规则 - 连续问题的特征】
-            1. 新问题包含指代词（"他们"、"这些"、"其中"、"那些"、"以上"等）
-            2. 新问题缺少明确的查询主体（人名、部门名、表名等）
-            3. 新问题是对上一个问题结果的进一步筛选、统计或查询
-            
-            【判断规则 - 非连续问题的特征（优先级更高）】
-            ⚠️ 以下情况必须判定为非连续问题：
-            1. 新问题已经包含明确的查询主体（人名、部门名、组织名等）
-            2. 新问题的查询目标与上一问不同或更具体
-            3. 新问题是对上一问的缩小范围或细化，而不是追问
-            4. 新问题与上一问高度相似（相似度>70%%），可能是重复或细化问题
-            5. 新问题的长度和完整性与上一问相当，且不以指代词开头
+
             
             【输出格式】
             严格按照以下JSON格式输出：
@@ -378,6 +367,19 @@ public class NL2SQLService {
             """, previous, current, sessionHint);
     }
 
+//                【判断规则 - 连续问题的特征】
+//            1. 新问题包含指代词（"他们"、"这些"、"其中"、"那些"、"以上"等）
+//            2. 新问题缺少明确的查询主体（人名、部门名、表名等）
+//            3. 新问题是对上一个问题结果的进一步筛选、统计或查询
+//
+//            【判断规则 - 非连续问题的特征（优先级更高）】
+//            ⚠️ 以下情况必须判定为非连续问题：
+//            1. 新问题已经包含明确的查询主体（人名、部门名、组织名等）
+//            2. 新问题的查询目标与上一问不同或更具体
+//            3. 新问题是对上一问的缩小范围或细化，而不是追问
+//            4. 新问题与上一问高度相似（相似度>70%%），可能是重复或细化问题
+//            5. 新问题的长度和完整性与上一问相当，且不以指代词开头
+
     /**
      * 处理数据库查询（第一阶段）
      */
@@ -386,7 +388,7 @@ public class NL2SQLService {
         
         try {
             // 1. 保存问题到 session
-            String newSessionId = sessionService.saveQuestionToSession(question, windowId, userId);
+//            String newSessionId = sessionService.saveQuestionToSession(question, windowId, userId);
             
             // 3. 选择数据库
             List<String> selectedDatabases = selectDatabases(question);
@@ -408,7 +410,7 @@ public class NL2SQLService {
             
             return Map.of(
                 "success", true,
-                "sessionId", newSessionId,
+//                "sessionId", newSessionId,
                 "question", question,
                 "selectedDatabases", selectedDatabases,
                 "keywords", mergedKeywords,
