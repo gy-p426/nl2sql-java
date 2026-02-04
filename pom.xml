@@ -116,6 +116,13 @@
             <version>2.3.0</version>
         </dependency>
 
+        <!-- JSqlParser - SQL解析和修改 -->
+        <dependency>
+            <groupId>com.github.jsqlparser</groupId>
+            <artifactId>jsqlparser</artifactId>
+            <version>4.7</version>
+        </dependency>
+
         <!-- Apache POI for Excel -->
         <dependency>
             <groupId>org.apache.poi</groupId>
