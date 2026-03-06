@@ -69,7 +69,7 @@ nl2sql:
   # 火山引擎配置（保留兼容性）
   volcano-engine:
     api-key: ${VOLCANO_API_KEY:7d7ec6e7-1f52-4deb-b881-7ea57442399f}
-    model: deepseek-v3-1-250821
+    model: deepseek-v3-2-251201
     timeout: 1800000
     base-url: https://ark.cn-beijing.volces.com/api/v3
   

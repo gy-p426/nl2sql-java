@@ -407,7 +407,7 @@ public class ConfigService {
         try {
             Map<String, Object> config = new HashMap<>();
             config.put("api_key", maskApiKey(getConfigValue("volcano_engine.api_key", "")));
-            config.put("model", getConfigValue("volcano_engine.model", "deepseek-v3-1-250821"));
+            config.put("model", getConfigValue("volcano_engine.model", "deepseek-v3-2-251201"));
             config.put("timeout", Long.parseLong(getConfigValue("volcano_engine.timeout", "1800000")));
             config.put("base_url", getConfigValue("volcano_engine.base_url", "https://ark.cn-beijing.volces.com/api/v3"));
             return config;

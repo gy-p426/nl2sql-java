@@ -82,7 +82,7 @@ public class DynamicConfigProvider {
      * 获取火山引擎模型
      */
     public String getVolcanoEngineModel() {
-        return getString("volcano_engine.model", "deepseek-v3-1-250821");
+        return getString("volcano_engine.model", "deepseek-v3-2-251201");
     }
 
     /**
