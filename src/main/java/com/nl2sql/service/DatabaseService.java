@@ -29,6 +29,7 @@ public class DatabaseService {
 
     private final DatabaseHostConfigRepository databaseHostConfigRepository;
     private final DatabaseOverviewRepository databaseOverviewRepository;
+    private final DatabaseAccessScopeService databaseAccessScopeService;
     private final DatabasePoolService databasePoolService;
     private final VolcanoEngineClient volcanoEngineClient;
     private final OllamaClient ollamaClient;
@@ -67,10 +68,36 @@ public class DatabaseService {
     }
 
     /**
+     * 获取用户可访问的数据库名称
+     */
+    public List<String> getAllDatabases(Integer userId) {
+        try {
+            List<String> scoped = databaseAccessScopeService.getAllowedDatabases(userId);
+            log.debug("📋 用户 {} 可访问数据库数量: {}, 列表: {}", userId, scoped.size(), scoped);
+            return scoped;
+        } catch (Exception e) {
+            log.error("❌ 获取用户 {} 数据库列表失败: {}", userId, e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    /**
      * 获取指定数据库的连接
      */
     public Connection getConnection(String dbName) throws SQLException {
         return databasePoolService.getConnection(dbName);
+    }
+
+    /**
+     * 获取指定用户可访问数据库的连接
+     */
+    public Connection getConnection(Integer userId, String dbName) throws SQLException {
+        databaseAccessScopeService.assertCanAccessDatabase(userId, dbName);
+        DatabaseHostConfig hostConfig = databaseAccessScopeService
+            .findOwnedHostConfigByDatabase(userId, dbName)
+            .orElseThrow(() -> new SQLException("未找到用户 " + userId + " 对数据库 " + dbName + " 的主机配置"));
+
+        return databasePoolService.getScopedConnection(userId, hostConfig, dbName);
     }
 
     /**
@@ -121,6 +148,50 @@ public class DatabaseService {
     }
 
     /**
+     * 执行SQL查询（用户作用域）
+     */
+    public List<Map<String, Object>> executeQuery(Integer userId, String sql, int limit) throws SQLException {
+        List<Map<String, Object>> results = new ArrayList<>();
+
+        String dbName = detectDatabaseFromSql(userId, sql);
+        if (dbName == null) {
+            throw new SQLException("无法从SQL中检测到数据库名");
+        }
+
+        try (Connection conn = getConnection(userId, dbName);
+             Statement stmt = conn.createStatement()) {
+
+            String limitedSql = sql;
+            if (!sql.toUpperCase().contains("LIMIT")) {
+                limitedSql = sql.trim();
+                if (limitedSql.endsWith(";")) {
+                    limitedSql = limitedSql.substring(0, limitedSql.length() - 1);
+                }
+                limitedSql = limitedSql + " LIMIT " + limit + ";";
+            }
+
+            log.info("🔍 [user={}] 执行SQL: {}", userId, limitedSql);
+
+            try (ResultSet rs = stmt.executeQuery(limitedSql)) {
+                int columnCount = rs.getMetaData().getColumnCount();
+
+                while (rs.next()) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (int i = 1; i <= columnCount; i++) {
+                        String columnName = rs.getMetaData().getColumnLabel(i);
+                        Object value = rs.getObject(i);
+                        row.put(columnName, value);
+                    }
+                    results.add(row);
+                }
+            }
+        }
+
+        log.info("✅ [user={}] 查询完成，返回 {} 条记录", userId, results.size());
+        return results;
+    }
+
+    /**
      * 从SQL中检测数据库名
      */
     public String detectDatabaseFromSql(String sql) {
@@ -132,6 +203,21 @@ public class DatabaseService {
             }
         }
         
+        return allDatabases.isEmpty() ? null : allDatabases.get(0);
+    }
+
+    /**
+     * 从SQL中检测数据库名（用户作用域）
+     */
+    public String detectDatabaseFromSql(Integer userId, String sql) {
+        List<String> allDatabases = getAllDatabases(userId);
+
+        for (String dbName : allDatabases) {
+            if (sql.contains(dbName + ".")) {
+                return dbName;
+            }
+        }
+
         return allDatabases.isEmpty() ? null : allDatabases.get(0);
     }
 
@@ -239,6 +325,84 @@ public class DatabaseService {
             log.error("❌ 数据库选择错误: {}", e.getMessage());
             log.warn("⚠️ 使用降级策略选择所有数据库");
             return getAllDatabases();
+        }
+    }
+
+    /**
+     * 智能选择数据库（用户作用域）
+     */
+    public List<String> selectDatabases(String question, Integer userId) {
+        try {
+            List<String> allowedDatabases = getAllDatabases(userId);
+            if (allowedDatabases.isEmpty()) {
+                log.warn("⚠️ 用户 {} 没有可访问数据库", userId);
+                return Collections.emptyList();
+            }
+
+            // 仅保留用户可访问数据库的概览
+            List<DatabaseOverview> overviews = databaseOverviewRepository.findByIsActiveTrue().stream()
+                .filter(overview -> allowedDatabases.contains(overview.getDatabaseName()))
+                .collect(Collectors.toList());
+
+            if (overviews.isEmpty()) {
+                log.warn("⚠️ 用户 {} 没有可用数据库概览，返回用户可访问数据库", userId);
+                return allowedDatabases;
+            }
+
+            StringBuilder dbOverview = new StringBuilder();
+            for (DatabaseOverview overview : overviews) {
+                dbOverview.append(String.format("数据库名：%s。表名表注释：%s。\n",
+                    overview.getDatabaseName(),
+                    overview.getTableSummary() != null ? overview.getTableSummary() : ""
+                ));
+            }
+
+            String prompt = String.format("""
+                你是一个智能数据库选择助手。请根据用户问题和数据库概览，选择最相关的一个或多个数据库。
+
+                [数据库概览]
+                %s
+
+                [输出要求]
+                - 只能从上面的数据库中选择
+                - 多个数据库名用英文逗号分隔
+                - 不要输出任何额外说明文字
+
+                [用户问题]
+                %s
+                """, dbOverview, question);
+
+            Map<String, Object> response = callAIModel(prompt, 0.1);
+            if (response.containsKey("error")) {
+                log.warn("⚠️ 用户 {} 选库调用失败，使用全部可访问数据库", userId);
+                return allowedDatabases;
+            }
+
+            String selectedDbsStr = ((String) response.get("response")).trim();
+            if (selectedDbsStr == null || selectedDbsStr.isEmpty()) {
+                log.warn("⚠️ 用户 {} 选库响应为空，使用全部可访问数据库", userId);
+                return allowedDatabases;
+            }
+
+            List<String> selectedDbs = Arrays.stream(selectedDbsStr.split(","))
+                .map(String::trim)
+                .filter(db -> !db.isEmpty())
+                .collect(Collectors.toList());
+
+            List<String> validDbs = selectedDbs.stream()
+                .filter(allowedDatabases::contains)
+                .collect(Collectors.toList());
+
+            if (validDbs.isEmpty()) {
+                log.warn("⚠️ 用户 {} AI未选中有效数据库，使用全部可访问数据库", userId);
+                return allowedDatabases;
+            }
+
+            log.info("🎯 [user={}] 数据库选择结果: {}", userId, validDbs);
+            return validDbs;
+        } catch (Exception e) {
+            log.error("❌ 用户 {} 数据库选择错误: {}", userId, e.getMessage());
+            return getAllDatabases(userId);
         }
     }
 

@@ -5,8 +5,8 @@ spring:
   # nl2sql数据库配置（用于存储系统数据）
   datasource:
     url: jdbc:mysql://localhost:3306/nl2sql?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-    username: gyp
-    password: gyp
+    username: root
+    password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 10
@@ -39,7 +39,7 @@ spring:
       file-size-threshold: 10MB   # 文件写入磁盘的阈值
 
 server:
-  port: 8080
+  port: 8081
   servlet:
     context-path: /api
 
@@ -59,8 +59,8 @@ nl2sql:
     - name: db1
       host: localhost
       port: 3306
-      username: gyp
-      password: gyp
+      username: root
+      password: root
       pool:
         maximum-pool-size: 10
         minimum-idle: 5
@@ -169,4 +169,5 @@ nl2sql:
   test-images-dir: test_images
 
 file-upload:
-    root-path: /home/gyp/nl2sql/nl2sql-java/upload/
+#    root-path: /home/gyp/nl2sql/nl2sql-java/upload/
+  root-path:  E:\gyp\NL2SQL\nl2sql-java\upload\

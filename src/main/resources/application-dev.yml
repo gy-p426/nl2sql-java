@@ -14,8 +14,8 @@ nl2sql:
     - name: db1
       host: localhost
       port: 3306
-      username: gyp
-      password: gyp
+      username: root
+      password: root
       databases:
         - yibin2
         - yibinhumanresources

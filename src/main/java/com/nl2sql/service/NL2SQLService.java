@@ -65,7 +65,7 @@ public class NL2SQLService {
 //                isContinuous ? "连续问题" : "独立问题");
             
             // 3. 选择数据库
-            List<String> selectedDatabases = selectDatabases(question);
+            List<String> selectedDatabases = selectDatabases(question, userId);
             log.info("📊 选择数据库: {}", selectedDatabases);
             
             // 4. 提取关键词
@@ -91,7 +91,7 @@ public class NL2SQLService {
             log.info("🔍 步骤6: 生成SQL");
             Map<String, List<String>> mergedKeywords = flattenKeywords(databaseKeywords);
             com.nl2sql.model.dto.SQLResult sqlResult = sqlGeneratorService.generateSQLWithExplanation(
-                    question, candidateTables, mergedKeywords
+                    question, candidateTables, mergedKeywords, userId
             );
             
             if (sqlResult == null || sqlResult.getSql() == null) {
@@ -108,7 +108,7 @@ public class NL2SQLService {
             List<Map<String, Object>> results = Collections.emptyList();
             
             try {
-                results = databaseService.executeQuery(sqlResult.getSql(), 100);
+                results = databaseService.executeQuery(userId, sqlResult.getSql(), 100);
                 log.info("✅ SQL执行成功，返回 {} 行", results.size());
             } catch (Exception e) {
                 log.warn("⚠️ SQL执行失败: {}", e.getMessage());
@@ -222,10 +222,18 @@ public class NL2SQLService {
     /**
      * 选择数据库
      */
-    private List<String> selectDatabases(String question) {
+    private List<String> selectDatabases(String question, Integer userId) {
         try {
+            List<String> allowedDatabases = databaseService.getAllDatabases(userId);
+            if (allowedDatabases.isEmpty()) {
+                log.warn("⚠️ 用户 {} 没有可访问数据库", userId);
+                return Collections.emptyList();
+            }
+
             // 1. 获取所有激活的数据库概览
-            List<DatabaseOverview> overviews = databaseOverviewRepository.findByIsActiveTrue();
+            List<DatabaseOverview> overviews = databaseOverviewRepository.findByIsActiveTrue().stream()
+                .filter(overview -> allowedDatabases.contains(overview.getDatabaseName()))
+                .collect(Collectors.toList());
             
             log.info("📋 数据库概览表中激活的数据库数量: {}", overviews.size());
             List<String> activeDbNames = overviews.stream()
@@ -234,8 +242,8 @@ public class NL2SQLService {
             log.info("📋 激活的数据库列表: {}", activeDbNames);
             
             if (overviews.isEmpty()) {
-                log.warn("⚠️ 没有可用的数据库概览，返回所有数据库");
-                return databaseService.getAllDatabases();
+                log.warn("⚠️ 没有可用的数据库概览，返回用户可访问数据库");
+                return allowedDatabases;
             }
             
             // 2. 构建数据库选择提示词
@@ -249,8 +257,8 @@ public class NL2SQLService {
             // 4. 解析响应
             String content = (String) response.get("response");
             if (content == null || content.trim().isEmpty()) {
-                log.warn("⚠️ AI未返回有效响应，使用所有激活数据库");
-                return activeDbNames;
+                log.warn("⚠️ AI未返回有效响应，使用用户可访问数据库");
+                return allowedDatabases;
             }
             
             // 5. 提取数据库列表
@@ -259,20 +267,20 @@ public class NL2SQLService {
             List<String> selectedDatabases = (List<String>) parsed.get("databases");
             
             if (selectedDatabases == null || selectedDatabases.isEmpty()) {
-                log.warn("⚠️ AI未返回有效的数据库列表，使用所有激活数据库");
-                return activeDbNames;
+                log.warn("⚠️ AI未返回有效的数据库列表，使用用户可访问数据库");
+                return allowedDatabases;
             }
             
-            // 6. 验证数据库是否在激活列表中
+            // 6. 验证数据库是否在用户可访问列表中
             selectedDatabases = selectedDatabases.stream()
-                .filter(activeDbNames::contains)
+                .filter(allowedDatabases::contains)
                 .collect(Collectors.toList());
             
             if (selectedDatabases.isEmpty()) {
-                log.warn("⚠️ AI选择的数据库都不在激活列表中，使用所有激活数据库");
-                log.warn("⚠️ AI选择: {}, 激活列表: {}", 
-                    parsed.get("databases"), activeDbNames);
-                return activeDbNames;
+                log.warn("⚠️ AI选择数据库超出用户可访问范围，使用用户可访问数据库");
+                log.warn("⚠️ AI选择: {}, 用户可访问: {}", 
+                    parsed.get("databases"), allowedDatabases);
+                return allowedDatabases;
             }
             
             log.info("✅ 智能选择数据库: {} (从激活列表: {})", selectedDatabases, activeDbNames);
@@ -280,7 +288,7 @@ public class NL2SQLService {
             
         } catch (Exception e) {
             log.error("❌ 数据库选择失败: {}", e.getMessage());
-            return databaseService.getAllDatabases();
+            return databaseService.getAllDatabases(userId);
         }
     }
     
@@ -436,11 +444,18 @@ public class NL2SQLService {
         long startTime = System.currentTimeMillis();
         
         try {
+            if (userId == null) {
+                return Map.of(
+                    "success", false,
+                    "error", "用户账号信息不能为空"
+                );
+            }
+
             // 1. 保存问题到 session
 //            String newSessionId = sessionService.saveQuestionToSession(question, windowId, userId);
             
             // 3. 选择数据库
-            List<String> selectedDatabases = selectDatabases(question);
+            List<String> selectedDatabases = selectDatabases(question, userId);
             log.info("📊 选择数据库: {}", selectedDatabases);
             
             // 4. 提取关键词
@@ -479,22 +494,38 @@ public class NL2SQLService {
     /**
      * 处理SQL查询（第二阶段）
      */
-    public Map<String, Object> processQuerySql(String question, List<String> candidateTables, 
-                                               Map<String, List<String>> mergedKeywords) {
+    public Map<String, Object> processQuerySql(String question, List<String> candidateTables,
+                                               Map<String, List<String>> mergedKeywords,
+                                               Integer userId) {
         long startTime = System.currentTimeMillis();
         
         try {
+            if (userId == null) {
+                return Map.of(
+                    "success", false,
+                    "error", "用户账号信息不能为空"
+                );
+            }
+
             if (candidateTables.isEmpty()) {
                 return Map.of(
                     "success", false,
                     "error", "未找到相关表结构"
                 );
             }
+
+            // 防止前端篡改候选表，严格校验候选表必须属于当前用户可访问数据库
+            if (!validateCandidateTablesOwnership(userId, candidateTables)) {
+                return Map.of(
+                    "success", false,
+                    "error", "候选表包含无权限访问的数据库"
+                );
+            }
             
             // 6. 生成 SQL（包含解释）
             log.info("🔍 步骤6: 生成SQL");
             com.nl2sql.model.dto.SQLResult sqlResult = sqlGeneratorService.generateSQLWithExplanation(
-                question, candidateTables, mergedKeywords
+                question, candidateTables, mergedKeywords, userId
             );
             
             if (sqlResult == null || sqlResult.getSql() == null) {
@@ -509,7 +540,7 @@ public class NL2SQLService {
             List<Map<String, Object>> results = Collections.emptyList();
             
             try {
-                results = databaseService.executeQuery(sqlResult.getSql(), 100);
+                results = databaseService.executeQuery(userId, sqlResult.getSql(), 100);
                 log.info("✅ SQL执行成功，返回 {} 行", results.size());
             } catch (Exception e) {
                 log.warn("⚠️ SQL执行失败: {}", e.getMessage());
@@ -547,5 +578,31 @@ public class NL2SQLService {
             });
         });
         return flattened;
+    }
+
+    private boolean validateCandidateTablesOwnership(Integer userId, List<String> candidateTables) {
+        List<String> allowedDatabases = databaseService.getAllDatabases(userId);
+        if (allowedDatabases.isEmpty()) {
+            return false;
+        }
+
+        for (String tableLine : candidateTables) {
+            if (tableLine == null || tableLine.isBlank()) {
+                continue;
+            }
+
+            String rawTableName = tableLine.split("\\|\\|")[0];
+            if (rawTableName == null || !rawTableName.contains(".")) {
+                continue;
+            }
+
+            String dbName = rawTableName.split("\\.")[0];
+            if (!allowedDatabases.contains(dbName)) {
+                log.warn("⚠️ [user={}] 候选表越权: {}", userId, rawTableName);
+                return false;
+            }
+        }
+
+        return true;
     }
 }

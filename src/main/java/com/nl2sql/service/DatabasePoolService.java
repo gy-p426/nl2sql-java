@@ -78,10 +78,17 @@ public class DatabasePoolService {
      * 创建单个数据库的连接池
      */
     private void createDatabasePool(DatabaseHostConfig hostConfig, String dbName) {
+        createDatabasePool(hostConfig, dbName, dbName);
+    }
+
+    /**
+     * 创建单个数据库的连接池（可指定poolKey）
+     */
+    private void createDatabasePool(DatabaseHostConfig hostConfig, String dbName, String poolKey) {
         try {
             // 如果连接池已存在，先关闭旧的
-            if (databasePools.containsKey(dbName)) {
-                DataSource oldDataSource = databasePools.get(dbName);
+            if (databasePools.containsKey(poolKey)) {
+                DataSource oldDataSource = databasePools.get(poolKey);
                 if (oldDataSource instanceof HikariDataSource) {
                     ((HikariDataSource) oldDataSource).close();
                 }
@@ -107,6 +114,10 @@ public class DatabasePoolService {
             
             // 构建 JDBC URL - 如果 host 已经包含端口号，就不再添加
             String jdbcUrl;
+            if (host == null || host.isBlank()) {
+                throw new IllegalArgumentException("数据库主机地址不能为空");
+            }
+
             if (host.contains(":")) {
                 jdbcUrl = String.format("jdbc:mysql://%s/%s?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8",
                     host, dbName);
@@ -130,7 +141,7 @@ public class DatabasePoolService {
             config.setLeakDetectionThreshold(60000); // 1分钟
             
             // 连接池名称
-            config.setPoolName("HikariPool-" + dbName);
+            config.setPoolName("HikariPool-" + poolKey.replace("|", "-"));
             
             // 创建数据源
             HikariDataSource dataSource = new HikariDataSource(config);
@@ -138,8 +149,8 @@ public class DatabasePoolService {
             // 测试连接
             try (Connection conn = dataSource.getConnection()) {
                 if (conn.isValid(5)) {
-                    databasePools.put(dbName, dataSource);
-                    log.info("✅ 数据库 {} 连接池创建成功", dbName);
+                    databasePools.put(poolKey, dataSource);
+                    log.info("✅ 数据库 {} 连接池创建成功（key={}）", dbName, poolKey);
                 } else {
                     dataSource.close();
                     log.error("❌ 数据库 {} 连接测试失败", dbName);
@@ -179,6 +190,24 @@ public class DatabasePoolService {
             }
         }
         
+        return dataSource.getConnection();
+    }
+
+    /**
+     * 获取指定用户+主机+数据库维度的连接
+     */
+    public Connection getScopedConnection(Integer userId, DatabaseHostConfig hostConfig, String dbName) throws SQLException {
+        String poolKey = buildScopedPoolKey(userId, hostConfig.getId(), dbName);
+        DataSource dataSource = databasePools.get(poolKey);
+
+        if (dataSource == null) {
+            createDatabasePool(hostConfig, dbName, poolKey);
+            dataSource = databasePools.get(poolKey);
+            if (dataSource == null) {
+                throw new SQLException("数据库 " + dbName + " 的作用域连接池不存在: " + poolKey);
+            }
+        }
+
         return dataSource.getConnection();
     }
     
@@ -282,5 +311,9 @@ public class DatabasePoolService {
         }
         
         return status;
+    }
+
+    private String buildScopedPoolKey(Integer userId, Integer hostConfigId, String dbName) {
+        return String.format("u:%s|h:%s|d:%s", userId, hostConfigId, dbName);
     }
 }

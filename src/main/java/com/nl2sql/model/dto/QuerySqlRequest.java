@@ -2,6 +2,7 @@ package com.nl2sql.model.dto;
 
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotEmpty;
+import jakarta.validation.constraints.NotNull;
 import lombok.Data;
 
 import java.util.List;
@@ -25,6 +26,9 @@ public class QuerySqlRequest {
     
     @NotBlank(message = "会话ID不能为空")
     private String sessionId;
+
+    @NotNull(message = "用户ID不能为空")
+    private Integer userId;
     
     // 手动添加getter方法以解决lombok问题
     public String getQuestion() {
@@ -46,6 +50,10 @@ public class QuerySqlRequest {
     public String getSessionId() {
         return sessionId;
     }
+
+    public Integer getUserId() {
+        return userId;
+    }
     
     public void setQuestion(String question) {
         this.question = question;
@@ -65,5 +73,9 @@ public class QuerySqlRequest {
     
     public void setSessionId(String sessionId) {
         this.sessionId = sessionId;
+    }
+
+    public void setUserId(Integer userId) {
+        this.userId = userId;
     }
 }

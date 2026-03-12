@@ -10,15 +10,29 @@ import java.time.LocalDateTime;
  */
 @Data
 @Entity
-@Table(name = "database_host_config")
+@Table(
+    name = "database_host_config",
+    uniqueConstraints = {
+        @UniqueConstraint(name = "uk_owner_name", columnNames = {"owner_user_id", "name"})
+    },
+    indexes = {
+        @Index(name = "idx_owner_active", columnList = "owner_user_id,is_active")
+    }
+)
 public class DatabaseHostConfig {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
 
-    @Column(name = "name", nullable = false, unique = true, length = 50)
+    @Column(name = "name", nullable = false, length = 50)
     private String name;
+
+    /**
+     * 配置所属用户ID（过渡期允许为空，迁移完成后应设为NOT NULL）
+     */
+    @Column(name = "owner_user_id")
+    private Integer ownerUserId;
 
     @Column(name = "host", nullable = false, length = 100)
     private String host;

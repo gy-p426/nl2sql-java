@@ -39,6 +39,14 @@ public class SQLGeneratorService {
             String question,
             List<String> candidateTables,
             Map<String, List<String>> keywords) {
+        return generateSQLWithExplanation(question, candidateTables, keywords, null);
+    }
+
+    public com.nl2sql.model.dto.SQLResult generateSQLWithExplanation(
+            String question,
+            List<String> candidateTables,
+            Map<String, List<String>> keywords,
+            Integer userId) {
         
         try {
             log.info("🎯 开始SQL生成 - 候选表数量: {}", candidateTables.size());
@@ -79,7 +87,7 @@ public class SQLGeneratorService {
             }
             
             // 执行SQL并过滤出成功的
-            Map<String, SQLExecutionResult> validSQLs = executeSQLs(modelSQLs);
+            Map<String, SQLExecutionResult> validSQLs = executeSQLs(modelSQLs, userId);
             
             if (validSQLs.isEmpty()) {
                 log.error("❌ 没有SQL执行成功");
@@ -123,6 +131,19 @@ public class SQLGeneratorService {
             Map<String, List<String>> keywords) {
         
         com.nl2sql.model.dto.SQLResult result = generateSQLWithExplanation(question, candidateTables, keywords);
+        if (result != null && result.getSql() != null) {
+            return List.of(result.getSql());
+        }
+        return Collections.emptyList();
+    }
+
+    public List<String> generateSQL(
+            String question,
+            List<String> candidateTables,
+            Map<String, List<String>> keywords,
+            Integer userId) {
+
+        com.nl2sql.model.dto.SQLResult result = generateSQLWithExplanation(question, candidateTables, keywords, userId);
         if (result != null && result.getSql() != null) {
             return List.of(result.getSql());
         }
@@ -316,7 +337,7 @@ public class SQLGeneratorService {
     /**
      * 执行多个SQL并返回成功的结果
      */
-    private Map<String, SQLExecutionResult> executeSQLs(Map<String, SQLWithExplanation> modelSQLs) {
+    private Map<String, SQLExecutionResult> executeSQLs(Map<String, SQLWithExplanation> modelSQLs, Integer userId) {
         Map<String, SQLExecutionResult> validResults = new HashMap<>();
         
         for (Map.Entry<String, SQLWithExplanation> entry : modelSQLs.entrySet()) {
@@ -327,7 +348,7 @@ public class SQLGeneratorService {
             
             try {
                 log.info("🔍 [{}] 执行SQL测试", modelKey);
-                Map<String, Object> result = executeSQLEnhanced(sql, 10);  // 只取10条测试
+                Map<String, Object> result = executeSQLEnhanced(sql, 10, userId);  // 只取10条测试
                 
                 if (Boolean.TRUE.equals(result.get("success"))) {
                     @SuppressWarnings("unchecked")
@@ -723,6 +744,10 @@ public class SQLGeneratorService {
      * 执行SQL（增强版，带LIMIT）- 完全按照Python实现
      */
     public Map<String, Object> executeSQLEnhanced(String sql, int limit) {
+        return executeSQLEnhanced(sql, limit, null);
+    }
+
+    public Map<String, Object> executeSQLEnhanced(String sql, int limit, Integer userId) {
         long startTime = System.currentTimeMillis();
         Map<String, Object> result = new HashMap<>();
 
@@ -734,7 +759,7 @@ public class SQLGeneratorService {
             }
 
             // 2. 检测涉及的数据库
-            List<String> databases = detectDatabasesInSql(sql);
+            List<String> databases = detectDatabasesInSql(sql, userId);
             log.debug("🎯 检测到数据库: {}", databases);
 
             if (databases.isEmpty()) {
@@ -750,7 +775,9 @@ public class SQLGeneratorService {
             String dbName = databases.get(0);
             log.info("💾 使用数据库 {} 执行SQL", dbName);
 
-            try (Connection conn = databaseService.getConnection(dbName);
+            try (Connection conn = userId != null
+                    ? databaseService.getConnection(userId, dbName)
+                    : databaseService.getConnection(dbName);
                  Statement stmt = conn.createStatement()) {
 
                 log.debug("📝 执行SQL: {}", sql);
@@ -812,13 +839,19 @@ public class SQLGeneratorService {
      * 检测SQL中涉及的数据库 - 完全按照Python实现
      */
     private List<String> detectDatabasesInSql(String sql) {
+        return detectDatabasesInSql(sql, null);
+    }
+
+    private List<String> detectDatabasesInSql(String sql, Integer userId) {
         List<String> databases = new ArrayList<>();
 
         // 查找形如 database.table 的模式
         Pattern pattern = Pattern.compile("\\b([a-zA-Z_][a-zA-Z0-9_]*)\\.[a-zA-Z_][a-zA-Z0-9_]*");
         Matcher matcher = pattern.matcher(sql);
 
-        List<String> availableDbs = databaseService.getAllDatabases();
+        List<String> availableDbs = userId != null
+            ? databaseService.getAllDatabases(userId)
+            : databaseService.getAllDatabases();
 
         while (matcher.find()) {
             String match = matcher.group(1);

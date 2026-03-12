@@ -71,7 +71,7 @@ public class StreamingService {
                 "message", "正在定位数据库..."
             ), startTime);
             
-            List<String> selectedDatabases = databaseService.selectDatabases(workingQuestion);
+            List<String> selectedDatabases = databaseService.selectDatabases(workingQuestion, userId);
             
             if (selectedDatabases == null || selectedDatabases.isEmpty()) {
                 sendProgress(emitter, "database_selection", "error", Map.of(
@@ -156,7 +156,7 @@ public class StreamingService {
             ), startTime);
             
             com.nl2sql.model.dto.SQLResult sqlResult = sqlGeneratorService.generateSQLWithExplanation(
-                workingQuestion, candidateTables, mergedKeywords
+                workingQuestion, candidateTables, mergedKeywords, userId
             );
             
             if (sqlResult == null || sqlResult.getSql() == null) {
@@ -191,7 +191,7 @@ public class StreamingService {
             String successfulSql = firstSql;
             List<Map<String, Object>> successfulResults = new ArrayList<>();
             
-            Map<String, Object> execResult = sqlGeneratorService.executeSQLEnhanced(firstSql, 10000);
+            Map<String, Object> execResult = sqlGeneratorService.executeSQLEnhanced(firstSql, 10000, userId);
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> results = (List<Map<String, Object>>) execResult.get("results");
             if (results != null) {

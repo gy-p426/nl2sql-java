@@ -75,13 +75,18 @@ public class QueryController {
     @Operation(summary = "处理自然语言查询 - 第二阶段（SQL生成和执行）")
     public ApiResponse<QuerySqlResponse> querySql(@Valid @RequestBody QuerySqlRequest request) {
         try {
+            if (request.getUserId() == null) {
+                return ApiResponse.error("用户账号信息不能为空");
+            }
+
             log.info("📝 收到SQL查询请求 - 窗口: {}, 问题: {}, 候选表数量: {}", 
                 request.getWindowId(), request.getQuestion(), request.getCandidateTables().size());
             
             Map<String, Object> result = nl2sqlService.processQuerySql(
                 request.getQuestion(),
                 request.getCandidateTables(),
-                request.getMergedKeywords()
+                request.getMergedKeywords(),
+                request.getUserId()
             );
             
             if (!(Boolean) result.get("success")) {
