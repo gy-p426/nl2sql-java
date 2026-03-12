@@ -228,6 +228,15 @@ public class DatabaseService {
         return databasePoolService.testConnection(dbName);
     }
 
+    public boolean testConnection(Integer userId, String dbName) {
+        try (Connection conn = getConnection(userId, dbName)) {
+            return conn.isValid(5);
+        } catch (SQLException e) {
+            log.error("❌ 用户 {} 数据库 {} 连接测试失败: {}", userId, dbName, e.getMessage());
+            return false;
+        }
+    }
+
     /**
      * 智能选择数据库 - 完全按照Python实现
      */

@@ -41,6 +41,10 @@ public class ExportController {
         log.info("📤 收到导出请求 - 格式: {}, 最大行数: {}", 
             request.getFormat(), request.getMaxRows());
         log.debug("SQL: {}", request.getSql());
+
+        if (request.getUserId() == null) {
+            throw new IllegalArgumentException("用户账号信息不能为空");
+        }
         
         // 设置响应头
         String filename = generateFilename(request.getFormat());
@@ -55,6 +59,7 @@ public class ExportController {
             // 执行导出
             long startTime = System.currentTimeMillis();
             int exportedRows = exportService.exportSql(
+                request.getUserId(),
                 request.getSql(),
                 request.getFormat(),
                 request.getMaxRows(),

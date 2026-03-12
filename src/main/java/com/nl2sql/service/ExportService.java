@@ -37,6 +37,11 @@ public class ExportService {
      */
     public int exportSql(String sql, String format, 
                          Integer maxRows, OutputStream output) throws Exception {
+        return exportSql(null, sql, format, maxRows, output);
+    }
+
+    public int exportSql(Integer userId, String sql, String format,
+                         Integer maxRows, OutputStream output) throws Exception {
         
         log.info("📤 开始导出 - 格式: {}, 最大行数: {}", format, maxRows);
         log.debug("原始SQL: {}", sql);
@@ -49,9 +54,9 @@ public class ExportService {
         // 2. 根据格式导出
         int exportedRows;
         if ("csv".equalsIgnoreCase(format)) {
-            exportedRows = exportToCsv(unlimitedSql, maxRows, output);
+            exportedRows = exportToCsv(userId, unlimitedSql, maxRows, output);
         } else if ("excel".equalsIgnoreCase(format)) {
-            exportedRows = exportToExcel(unlimitedSql, maxRows, output);
+            exportedRows = exportToExcel(userId, unlimitedSql, maxRows, output);
         } else {
             throw new IllegalArgumentException("不支持的格式: " + format);
         }
@@ -63,7 +68,7 @@ public class ExportService {
     /**
      * 导出为CSV
      */
-    private int exportToCsv(String sql, Integer maxRows, OutputStream output) throws Exception {
+    private int exportToCsv(Integer userId, String sql, Integer maxRows, OutputStream output) throws Exception {
         int rowCount = 0;
         
         try (OutputStreamWriter writer = new OutputStreamWriter(output, StandardCharsets.UTF_8)) {
@@ -72,9 +77,11 @@ public class ExportService {
             writer.write('\uFEFF');
             
             // 检测数据库并获取连接
-            String dbName = detectDatabaseFromSql(sql);
+            String dbName = detectDatabaseFromSql(userId, sql);
             
-            try (Connection conn = databaseService.getConnection(dbName);
+            try (Connection conn = userId != null
+                    ? databaseService.getConnection(userId, dbName)
+                    : databaseService.getConnection(dbName);
                  Statement stmt = conn.createStatement()) {
                 
                 // 配置流式查询
@@ -132,7 +139,7 @@ public class ExportService {
     /**
      * 导出为Excel
      */
-    private int exportToExcel(String sql, Integer maxRows, OutputStream output) throws Exception {
+    private int exportToExcel(Integer userId, String sql, Integer maxRows, OutputStream output) throws Exception {
         int rowCount = 0;
         
         // 使用SXSSFWorkbook（流式写入，内存占用小）
@@ -140,9 +147,11 @@ public class ExportService {
             Sheet sheet = workbook.createSheet("数据");
             
             // 检测数据库并获取连接
-            String dbName = detectDatabaseFromSql(sql);
+            String dbName = detectDatabaseFromSql(userId, sql);
             
-            try (Connection conn = databaseService.getConnection(dbName);
+            try (Connection conn = userId != null
+                    ? databaseService.getConnection(userId, dbName)
+                    : databaseService.getConnection(dbName);
                  Statement stmt = conn.createStatement()) {
                 
                 // 配置流式查询
@@ -270,8 +279,10 @@ public class ExportService {
     /**
      * 从SQL中检测数据库名
      */
-    private String detectDatabaseFromSql(String sql) {
-        String dbName = databaseService.detectDatabaseFromSql(sql);
+    private String detectDatabaseFromSql(Integer userId, String sql) {
+        String dbName = userId != null
+            ? databaseService.detectDatabaseFromSql(userId, sql)
+            : databaseService.detectDatabaseFromSql(sql);
         if (dbName == null) {
             throw new RuntimeException("无法从SQL中检测到数据库名");
         }

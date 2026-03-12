@@ -34,6 +34,7 @@ public class ConfigService {
     private final ObjectMapper objectMapper;
     private final SchemaService schemaService;
     private final DatabasePoolService databasePoolService;
+    private final DatabaseAccessScopeService databaseAccessScopeService;
 
     /**
      * 重新加载配置
@@ -48,9 +49,15 @@ public class ConfigService {
      * 获取所有数据库主机配置
      */
     public Map<String, Object> getDatabaseHosts() {
+        return getDatabaseHosts(null);
+    }
+
+    public Map<String, Object> getDatabaseHosts(Integer userId) {
         log.info("📋 获取数据库主机配置");
         try {
-            List<DatabaseHostConfig> hosts = databaseHostConfigRepository.findByIsActiveTrue();
+            List<DatabaseHostConfig> hosts = userId != null
+                ? databaseHostConfigRepository.findByOwnerUserIdAndIsActiveTrue(userId)
+                : databaseHostConfigRepository.findByIsActiveTrue();
             List<Map<String, Object>> hostList = hosts.stream()
                 .map(this::databaseHostToMap)
                 .collect(Collectors.toList());
@@ -68,10 +75,17 @@ public class ConfigService {
     @Transactional
     public Map<String, Object> addOrUpdateDatabaseHost(String name, String host, String user, 
                                                         String password, List<String> databases) {
+        return addOrUpdateDatabaseHost(null, name, host, user, password, databases);
+    }
+
+    @Transactional
+    public Map<String, Object> addOrUpdateDatabaseHost(Integer userId, String name, String host, String user,
+                                                        String password, List<String> databases) {
         log.info("💾 添加/更新数据库主机配置: {}", name);
         try {
-            DatabaseHostConfig config = databaseHostConfigRepository.findByName(name)
-                .orElse(new DatabaseHostConfig());
+            DatabaseHostConfig config = userId != null
+                ? databaseHostConfigRepository.findByOwnerUserIdAndName(userId, name).orElse(new DatabaseHostConfig())
+                : databaseHostConfigRepository.findByName(name).orElse(new DatabaseHostConfig());
             
             // 获取旧的数据库列表用于比较
             List<String> oldDatabases = new ArrayList<>();
@@ -87,6 +101,9 @@ public class ConfigService {
             }
             
             config.setName(name);
+            if (userId != null) {
+                config.setOwnerUserId(userId);
+            }
             config.setHost(host);
             config.setUsername(user);
             config.setPassword(password); // TODO: 加密存储
@@ -120,9 +137,19 @@ public class ConfigService {
      */
     @Transactional
     public Map<String, Object> deleteDatabaseHost(String name) {
+        return deleteDatabaseHost(null, name);
+    }
+
+    @Transactional
+    public Map<String, Object> deleteDatabaseHost(Integer userId, String name) {
         log.info("🗑️ 删除数据库主机配置: {}", name);
         try {
-            databaseHostConfigRepository.deleteByName(name);
+            if (userId != null) {
+                databaseAccessScopeService.assertOwnsHostConfig(userId, name);
+                databaseHostConfigRepository.deleteByOwnerUserIdAndName(userId, name);
+            } else {
+                databaseHostConfigRepository.deleteByName(name);
+            }
             
             // 🔄 同步更新 database_overview 表
             syncDatabaseOverviews();
@@ -142,10 +169,14 @@ public class ConfigService {
      */
     @Transactional
     public Map<String, Object> addDatabaseToHost(String name, String database) {
+        return addDatabaseToHost(null, name, database);
+    }
+
+    @Transactional
+    public Map<String, Object> addDatabaseToHost(Integer userId, String name, String database) {
         log.info("➕ 向主机 {} 添加数据库: {}", name, database);
         try {
-            DatabaseHostConfig config = databaseHostConfigRepository.findByName(name)
-                .orElseThrow(() -> new RuntimeException("数据库主机配置不存在"));
+            DatabaseHostConfig config = getOwnedHostConfig(userId, name);
             
             List<String> databases = objectMapper.readValue(
                 config.getDatabases(), 
@@ -176,10 +207,14 @@ public class ConfigService {
      */
     @Transactional
     public Map<String, Object> removeDatabaseFromHost(String name, String database) {
+        return removeDatabaseFromHost(null, name, database);
+    }
+
+    @Transactional
+    public Map<String, Object> removeDatabaseFromHost(Integer userId, String name, String database) {
         log.info("➖ 从主机 {} 移除数据库: {}", name, database);
         try {
-            DatabaseHostConfig config = databaseHostConfigRepository.findByName(name)
-                .orElseThrow(() -> new RuntimeException("数据库主机配置不存在"));
+            DatabaseHostConfig config = getOwnedHostConfig(userId, name);
             
             List<String> databases = objectMapper.readValue(
                 config.getDatabases(), 
@@ -378,10 +413,13 @@ public class ConfigService {
      * 测试已保存的连接
      */
     public Map<String, Object> testSavedConnection(String name, String database) {
+        return testSavedConnection(null, name, database);
+    }
+
+    public Map<String, Object> testSavedConnection(Integer userId, String name, String database) {
         log.info("🔌 测试已保存连接: {} - {}", name, database);
         try {
-            DatabaseHostConfig config = databaseHostConfigRepository.findByName(name)
-                .orElseThrow(() -> new RuntimeException("数据库主机配置不存在"));
+            DatabaseHostConfig config = getOwnedHostConfig(userId, name);
             
             String url = String.format("jdbc:mysql://%s:%d/%s?useSSL=false&serverTimezone=UTC",
                 config.getHost(), config.getPort(), database != null ? database : "");
@@ -646,6 +684,7 @@ public class ConfigService {
         try {
             Map<String, Object> map = new HashMap<>();
             map.put("name", host.getName());
+            map.put("owner_user_id", host.getOwnerUserId());
             map.put("host", host.getHost());
             map.put("port", host.getPort());
             map.put("username", host.getUsername());
@@ -668,5 +707,16 @@ public class ConfigService {
             log.error("转换DatabaseHostConfig失败: {}", e.getMessage());
             return new HashMap<>();
         }
+    }
+
+    private DatabaseHostConfig getOwnedHostConfig(Integer userId, String name) {
+        if (userId == null) {
+            return databaseHostConfigRepository.findByName(name)
+                .orElseThrow(() -> new RuntimeException("数据库主机配置不存在"));
+        }
+
+        databaseAccessScopeService.assertOwnsHostConfig(userId, name);
+        return databaseHostConfigRepository.findByOwnerUserIdAndName(userId, name)
+            .orElseThrow(() -> new RuntimeException("数据库主机配置不存在或无权限访问"));
     }
 }

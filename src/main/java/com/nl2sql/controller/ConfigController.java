@@ -1,10 +1,6 @@
 package com.nl2sql.controller;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.nl2sql.model.dto.ApiResponse;
-import com.nl2sql.model.entity.DatabaseHostConfig;
-import com.nl2sql.repository.DatabaseHostConfigRepository;
 import com.nl2sql.service.ConfigService;
 import com.nl2sql.service.DatabaseService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -13,9 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -30,17 +24,15 @@ public class ConfigController {
 
     private final DatabaseService databaseService;
     private final ConfigService configService;
-    private final DatabaseHostConfigRepository databaseHostConfigRepository;
-    private final ObjectMapper objectMapper;
 
     @GetMapping
     @Operation(summary = "获取系统配置")
-    public ApiResponse<Map<String, Object>> getConfig() {
+    public ApiResponse<Map<String, Object>> getConfig(@RequestParam Integer userId) {
         try {
             Map<String, Object> config = new HashMap<>();
             
             // 数据库配置
-            config.put("databases", configService.getDatabaseHosts());
+            config.put("databases", configService.getDatabaseHosts(userId));
             
             // 火山引擎配置
             config.put("volcano_engine", configService.getVolcanoEngineConfig());
@@ -63,24 +55,9 @@ public class ConfigController {
 
     @GetMapping("/databases")
     @Operation(summary = "获取所有配置的数据库列表")
-    public ApiResponse<List<String>> getDatabases() {
+    public ApiResponse<java.util.List<String>> getDatabases(@RequestParam Integer userId) {
         try {
-            // 基于 database_host_config 表获取数据库列表
-            List<DatabaseHostConfig> activeHosts = databaseHostConfigRepository.findByIsActiveTrue();
-            List<String> databases = new ArrayList<>();
-            
-            for (DatabaseHostConfig host : activeHosts) {
-                try {
-                    List<String> hostDatabases = objectMapper.readValue(
-                        host.getDatabases(), 
-                        new TypeReference<List<String>>() {}
-                    );
-                    databases.addAll(hostDatabases);
-                } catch (Exception e) {
-                    log.warn("⚠️ 解析主机 {} 的数据库配置失败: {}", host.getName(), e.getMessage());
-                }
-            }
-            
+            java.util.List<String> databases = databaseService.getAllDatabases(userId);
             return ApiResponse.success(databases);
         } catch (Exception e) {
             log.error("❌ 获取数据库列表错误: {}", e.getMessage());
@@ -90,9 +67,10 @@ public class ConfigController {
 
     @PostMapping("/test-connection/{dbName}")
     @Operation(summary = "测试数据库连接")
-    public ApiResponse<Map<String, Object>> testConnection(@PathVariable String dbName) {
+    public ApiResponse<Map<String, Object>> testConnection(@PathVariable String dbName,
+                                                           @RequestParam Integer userId) {
         try {
-            boolean success = databaseService.testConnection(dbName);
+            boolean success = databaseService.testConnection(userId, dbName);
             
             Map<String, Object> result = new HashMap<>();
             result.put("database", dbName);
@@ -108,11 +86,11 @@ public class ConfigController {
 
     @GetMapping("/stats")
     @Operation(summary = "获取系统统计信息")
-    public ApiResponse<Map<String, Object>> getStats() {
+    public ApiResponse<Map<String, Object>> getStats(@RequestParam Integer userId) {
         try {
             Map<String, Object> stats = new HashMap<>();
             
-            List<String> databases = databaseService.getAllDatabases();
+            java.util.List<String> databases = databaseService.getAllDatabases(userId);
             stats.put("total_databases", databases.size());
             stats.put("databases", databases);
             
@@ -141,9 +119,9 @@ public class ConfigController {
 
     @GetMapping("/database-hosts")
     @Operation(summary = "获取所有数据库主机配置")
-    public ApiResponse<Map<String, Object>> getDatabaseHosts() {
+    public ApiResponse<Map<String, Object>> getDatabaseHosts(@RequestParam Integer userId) {
         try {
-            Map<String, Object> hosts = configService.getDatabaseHosts();
+            Map<String, Object> hosts = configService.getDatabaseHosts(userId);
             return ApiResponse.success("获取数据库主机配置成功", hosts);
         } catch (Exception e) {
             log.error("❌ 获取数据库主机配置错误: {}", e.getMessage());
@@ -155,18 +133,19 @@ public class ConfigController {
     @Operation(summary = "添加或更新数据库主机配置")
     public ApiResponse<Map<String, Object>> addOrUpdateDatabaseHost(@RequestBody Map<String, Object> request) {
         try {
+            Integer userId = request.containsKey("userId") ? ((Number) request.get("userId")).intValue() : null;
             String section = (String) request.get("section");
             String host = (String) request.get("host");
             String user = (String) request.get("user");
             String password = (String) request.get("password");
             @SuppressWarnings("unchecked")
-            List<String> databases = (List<String>) request.get("databases");
+            java.util.List<String> databases = (java.util.List<String>) request.get("databases");
             
-            if (section == null || host == null || user == null || password == null) {
+            if (userId == null || section == null || host == null || user == null || password == null) {
                 return ApiResponse.error("缺少必要参数");
             }
             
-            Map<String, Object> result = configService.addOrUpdateDatabaseHost(section, host, user, password, databases);
+            Map<String, Object> result = configService.addOrUpdateDatabaseHost(userId, section, host, user, password, databases);
             return ApiResponse.success("保存成功", result);
         } catch (Exception e) {
             log.error("❌ 添加/更新数据库主机配置错误: {}", e.getMessage());
@@ -176,9 +155,10 @@ public class ConfigController {
 
     @DeleteMapping("/database-hosts/{section}")
     @Operation(summary = "删除数据库主机配置")
-    public ApiResponse<Map<String, Object>> deleteDatabaseHost(@PathVariable String section) {
+    public ApiResponse<Map<String, Object>> deleteDatabaseHost(@PathVariable String section,
+                                                               @RequestParam Integer userId) {
         try {
-            Map<String, Object> result = configService.deleteDatabaseHost(section);
+            Map<String, Object> result = configService.deleteDatabaseHost(userId, section);
             
             if ((Boolean) result.getOrDefault("success", false)) {
                 return ApiResponse.success("删除成功", result);
@@ -198,12 +178,13 @@ public class ConfigController {
             @RequestBody Map<String, String> request) {
         try {
             String database = request.get("database");
+            Integer userId = request.containsKey("userId") ? Integer.valueOf(request.get("userId")) : null;
             
-            if (database == null || database.trim().isEmpty()) {
+            if (userId == null || database == null || database.trim().isEmpty()) {
                 return ApiResponse.error("数据库名不能为空");
             }
             
-            Map<String, Object> result = configService.addDatabaseToHost(section, database);
+            Map<String, Object> result = configService.addDatabaseToHost(userId, section, database);
             
             if ((Boolean) result.getOrDefault("success", false)) {
                 return ApiResponse.success("添加成功", result);
@@ -220,9 +201,10 @@ public class ConfigController {
     @Operation(summary = "从指定主机移除数据库")
     public ApiResponse<Map<String, Object>> removeDatabaseFromHost(
             @PathVariable String section,
-            @PathVariable String databaseKey) {
+            @PathVariable String databaseKey,
+            @RequestParam Integer userId) {
         try {
-            Map<String, Object> result = configService.removeDatabaseFromHost(section, databaseKey);
+            Map<String, Object> result = configService.removeDatabaseFromHost(userId, section, databaseKey);
             
             if ((Boolean) result.getOrDefault("success", false)) {
                 return ApiResponse.success("移除成功", result);
@@ -267,7 +249,12 @@ public class ConfigController {
             @RequestBody(required = false) Map<String, String> request) {
         try {
             String database = request != null ? request.get("database") : null;
-            Map<String, Object> result = configService.testSavedConnection(section, database);
+            Integer userId = request != null && request.containsKey("userId") ? Integer.valueOf(request.get("userId")) : null;
+            if (userId == null) {
+                return ApiResponse.error("用户账号信息不能为空");
+            }
+
+            Map<String, Object> result = configService.testSavedConnection(userId, section, database);
             
             if ((Boolean) result.getOrDefault("success", false)) {
                 return ApiResponse.success("连接成功", result);

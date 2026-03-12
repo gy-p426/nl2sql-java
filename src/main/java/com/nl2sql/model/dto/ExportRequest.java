@@ -1,6 +1,7 @@
 package com.nl2sql.model.dto;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 
 /**
  * 导出请求DTO
@@ -26,6 +27,12 @@ public class ExportRequest {
      * 默认100万行
      */
     private Integer maxRows = 1000000;
+
+    /**
+     * 用户ID（必需）
+     */
+    @NotNull(message = "用户ID不能为空")
+    private Integer userId;
     
     // Getter and Setter methods
     public String getSql() {
@@ -50,5 +57,13 @@ public class ExportRequest {
     
     public void setMaxRows(Integer maxRows) {
         this.maxRows = maxRows;
+    }
+
+    public Integer getUserId() {
+        return userId;
+    }
+
+    public void setUserId(Integer userId) {
+        this.userId = userId;
     }
 }

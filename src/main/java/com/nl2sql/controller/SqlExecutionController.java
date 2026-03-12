@@ -29,20 +29,25 @@ public class SqlExecutionController {
     public ApiResponse<Map<String, Object>> executeSql(@RequestBody Map<String, Object> request) {
         try {
             String sql = (String) request.get("sql");
-            Integer limit = request.containsKey("limit") ? (Integer) request.get("limit") : 100;
+            Integer limit = request.containsKey("limit") ? ((Number) request.get("limit")).intValue() : 100;
+            Integer userId = request.containsKey("userId") ? ((Number) request.get("userId")).intValue() : null;
             
             if (sql == null || sql.trim().isEmpty()) {
                 return ApiResponse.error("SQL语句不能为空");
             }
+
+            if (userId == null) {
+                return ApiResponse.error("用户账号信息不能为空");
+            }
             
             // 检测数据库
-            String dbName = databaseService.detectDatabaseFromSql(sql);
+            String dbName = databaseService.detectDatabaseFromSql(userId, sql);
             if (dbName == null) {
                 return ApiResponse.error("无法从SQL中检测到数据库");
             }
             
             // 执行SQL
-            List<Map<String, Object>> results = databaseService.executeQuery(sql, limit);
+            List<Map<String, Object>> results = databaseService.executeQuery(userId, sql, limit);
             
             Map<String, Object> response = new HashMap<>();
             response.put("database", dbName);
