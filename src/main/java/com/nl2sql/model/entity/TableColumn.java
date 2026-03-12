@@ -10,11 +10,14 @@ import java.time.LocalDateTime;
 @Data
 @Entity
 @Table(name = "table_columns",
-    uniqueConstraints = @UniqueConstraint(name = "uk_db_table_column", 
-        columnNames = {"database_name", "table_name", "column_name"}),
+    uniqueConstraints = @UniqueConstraint(
+        name = "uk_owner_host_db_table_column",
+        columnNames = {"owner_user_id", "host_config_id", "database_name", "table_name", "column_name"}
+    ),
     indexes = {
         @Index(name = "idx_schema", columnList = "schema_id"),
-        @Index(name = "idx_db_table", columnList = "database_name, table_name")
+        @Index(name = "idx_db_table", columnList = "database_name, table_name"),
+        @Index(name = "idx_owner_host_table", columnList = "owner_user_id,host_config_id,database_name,table_name")
     }
 )
 public class TableColumn {
@@ -26,6 +29,12 @@ public class TableColumn {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "schema_id", nullable = false, foreignKey = @ForeignKey(name = "fk_column_schema"))
     private DatabaseSchema schema;
+
+    @Column(name = "owner_user_id")
+    private Integer ownerUserId;
+
+    @Column(name = "host_config_id")
+    private Integer hostConfigId;
     
     @Column(name = "database_name", nullable = false, length = 100)
     private String databaseName;

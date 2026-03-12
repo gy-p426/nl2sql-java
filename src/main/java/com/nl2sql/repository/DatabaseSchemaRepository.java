@@ -19,16 +19,35 @@ public interface DatabaseSchemaRepository extends JpaRepository<DatabaseSchema, 
      * 查找数据库的所有表
      */
     List<DatabaseSchema> findByDatabaseName(String databaseName);
+
+    List<DatabaseSchema> findByOwnerUserIdAndHostConfigIdAndDatabaseName(
+        Integer ownerUserId,
+        Integer hostConfigId,
+        String databaseName
+    );
     
     /**
      * 查找特定表
      */
     Optional<DatabaseSchema> findByDatabaseNameAndTableName(String databaseName, String tableName);
+
+    Optional<DatabaseSchema> findByOwnerUserIdAndHostConfigIdAndDatabaseNameAndTableName(
+        Integer ownerUserId,
+        Integer hostConfigId,
+        String databaseName,
+        String tableName
+    );
     
     /**
      * 删除数据库的所有表
      */
     void deleteByDatabaseName(String databaseName);
+
+    void deleteByOwnerUserIdAndHostConfigIdAndDatabaseName(
+        Integer ownerUserId,
+        Integer hostConfigId,
+        String databaseName
+    );
     
     /**
      * 获取所有数据库名称

@@ -2,7 +2,9 @@ package com.excelmanage.service;
 
 import com.excelmanage.model.dto.FileUploadRequest;
 import com.excelmanage.model.dto.FileUploadResponse;
-import com.nl2sql.service.DatabasePoolService;
+import com.nl2sql.model.entity.DatabaseHostConfig;
+import com.nl2sql.service.DatabaseAccessScopeService;
+import com.nl2sql.service.DatabaseService;
 import com.nl2sql.service.SchemaService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,8 +30,9 @@ public class ExcelManageService {
     private final FileParseService fileParseService;
     private final DataTypeDetectionService dataTypeDetectionService;
     private final DatabaseTableService databaseTableService;
-    private final DatabasePoolService databasePoolService;
+    private final DatabaseService databaseService;
     private final SchemaService schemaService;
+    private final DatabaseAccessScopeService databaseAccessScopeService;
 
     /**
      * 获取Excel列表
@@ -65,6 +68,7 @@ public class ExcelManageService {
      */
     @Transactional
     public FileUploadResponse uploadAndCreateTables(MultipartFile file, FileUploadRequest request) {
+        Integer userId = request.getUserId();
         List<FileUploadResponse.TableInfo> tables = new ArrayList<>();
         List<String> errors = new ArrayList<>();
         List<String> warnings = new ArrayList<>();
@@ -78,7 +82,7 @@ public class ExcelManageService {
                     request.getDatabaseName() : "exceldatabase";
             
             // 验证数据库是否存在
-            if (!checkDatabaseExists(databaseName)) {
+            if (!checkDatabaseExists(databaseName, userId)) {
                 errors.add("数据库 " + databaseName + " 不存在");
                 return buildErrorResponse(errors);
             }
@@ -154,7 +158,7 @@ public class ExcelManageService {
                     }
                     
                     // 检查表是否存在
-                    boolean tableExists = databaseTableService.checkTableExists(databaseName, tableName);
+                    boolean tableExists = databaseTableService.checkTableExists(databaseName, tableName, userId);
                     
                     FileUploadResponse.TableInfo tableInfo;
                     
@@ -165,9 +169,10 @@ public class ExcelManageService {
                         // 检查表结构是否匹配
                         DatabaseTableService.TableStructureMatchResult matchResult = 
                             databaseTableService.checkTableStructureMatch(
-                                databaseName, 
-                                tableName, 
-                                sheetData.getHeaders()
+                                databaseName,
+                                tableName,
+                                sheetData.getHeaders(),
+                                userId
                             );
                         
                         if (!matchResult.getMatch()) {
@@ -186,11 +191,12 @@ public class ExcelManageService {
                             databaseName,
                             tableName,
                             sheetData.getHeaders(),
-                            sheetData.getRows()
+                            sheetData.getRows(),
+                            userId
                         );
                         
                         // 获取表的列信息用于响应
-                        Map<String, String> tableColumns = databaseTableService.getTableColumns(databaseName, tableName);
+                        Map<String, String> tableColumns = databaseTableService.getTableColumns(databaseName, tableName, userId);
                         List<DataTypeDetectionService.ColumnTypeInfo> columnTypeInfos = 
                             detectColumnTypes(sheetData);
                         
@@ -219,7 +225,8 @@ public class ExcelManageService {
                                 sheetData.getHeaders(),
                                 sheetData.getRows(),
                                 columnTypeInfos,
-                                request.getOverwrite()
+                                request.getOverwrite(),
+                                userId
                             );
                         
                         // 构建表信息
@@ -275,8 +282,15 @@ public class ExcelManageService {
             if (!tables.isEmpty()) {
                 try {
                     log.info("🔄 正在刷新数据库 {} 的 Schema 元数据……", databaseName);
-                    // 只刷新当前发生变化的数据库，避免全量刷新带来的开销
-                    schemaService.exportDatabaseSchema(databaseName, true);
+                    // 只刷新当前发生变化的数据库，且按用户+主机作用域刷新
+                    java.util.Optional<DatabaseHostConfig> hostConfigOpt =
+                            databaseAccessScopeService.findOwnedHostConfigByDatabase(userId, databaseName);
+                    if (hostConfigOpt.isPresent()) {
+                        schemaService.exportDatabaseSchema(userId, hostConfigOpt.get().getId(), databaseName, true);
+                    } else {
+                        // 理论上不会发生，兜底走全局刷新，避免功能中断
+                        schemaService.exportDatabaseSchema(databaseName, true);
+                    }
                     log.info("✅ 数据库 {} 的 Schema 元数据刷新完成", databaseName);
                 } catch (Exception e) {
                     String warnMsg = String.format(
@@ -596,9 +610,11 @@ public class ExcelManageService {
     /**
      * 检查数据库是否存在
      */
-    private boolean checkDatabaseExists(String databaseName) {
+    private boolean checkDatabaseExists(String databaseName, Integer userId) {
         try {
-            Connection conn = databasePoolService.getConnection(databaseName);
+            Connection conn = userId != null
+                ? databaseService.getConnection(userId, databaseName)
+                : databaseService.getConnection(databaseName);
             if (conn != null) {
                 conn.close();
                 return true;

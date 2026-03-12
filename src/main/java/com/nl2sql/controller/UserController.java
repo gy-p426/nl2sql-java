@@ -208,6 +208,25 @@ public class UserController {
             return ApiResponse.error((String) result.get("message"));
         }
     }
+
+    /**
+     * 修改用户角色（仅管理员）
+     */
+    @PutMapping("/{id}/role")
+    public ApiResponse<Map<String, Object>> updateUserRole(
+            @PathVariable Integer id,
+            @RequestParam Integer userId,
+            @RequestBody Map<String, String> request) {
+        String role = request.get("role");
+
+        Map<String, Object> result = userService.updateUserRole(userId, id, role);
+
+        if ((Boolean) result.get("success")) {
+            return ApiResponse.success(result);
+        } else {
+            return ApiResponse.error((String) result.get("message"));
+        }
+    }
     
     /**
      * 获取用户的安全问题

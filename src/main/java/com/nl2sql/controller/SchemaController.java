@@ -46,7 +46,7 @@ public class SchemaController {
     @Operation(summary = "重新加载自定义注释")
     public ApiResponse<Map<String, Object>> reloadAnnotations() {
         try {
-            annotationService.loadAnnotations();
+            annotationService.reloadAnnotationsState();
             
             Map<String, Object> result = new HashMap<>();
             result.put("message", "注释重新加载成功");

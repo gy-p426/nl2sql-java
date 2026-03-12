@@ -12,14 +12,26 @@ import java.util.List;
 @Data
 @Entity
 @Table(name = "database_schema", 
-    uniqueConstraints = @UniqueConstraint(name = "uk_db_table", columnNames = {"database_name", "table_name"}),
-    indexes = @Index(name = "idx_database", columnList = "database_name")
+    uniqueConstraints = @UniqueConstraint(
+        name = "uk_owner_host_db_table",
+        columnNames = {"owner_user_id", "host_config_id", "database_name", "table_name"}
+    ),
+    indexes = {
+        @Index(name = "idx_owner_host_db", columnList = "owner_user_id,host_config_id,database_name"),
+        @Index(name = "idx_database", columnList = "database_name")
+    }
 )
 public class DatabaseSchema {
     
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
+
+    @Column(name = "owner_user_id")
+    private Integer ownerUserId;
+
+    @Column(name = "host_config_id")
+    private Integer hostConfigId;
     
     @Column(name = "database_name", nullable = false, length = 100)
     private String databaseName;

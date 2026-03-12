@@ -11,14 +11,20 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "custom_annotations",
     uniqueConstraints = @UniqueConstraint(name = "uk_annotation", 
-        columnNames = {"database_name", "table_name", "column_name"}),
-    indexes = @Index(name = "idx_database", columnList = "database_name")
+        columnNames = {"owner_user_id", "database_name", "table_name", "column_name"}),
+    indexes = {
+        @Index(name = "idx_database", columnList = "database_name"),
+        @Index(name = "idx_owner_database", columnList = "owner_user_id,database_name")
+    }
 )
 public class CustomAnnotation {
     
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
+
+    @Column(name = "owner_user_id", nullable = false)
+    private Integer ownerUserId;
     
     @Column(name = "database_name", nullable = false, length = 100)
     private String databaseName;

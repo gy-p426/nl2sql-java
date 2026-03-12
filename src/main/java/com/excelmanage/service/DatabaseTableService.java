@@ -1,6 +1,7 @@
 package com.excelmanage.service;
 
 import com.nl2sql.service.DatabasePoolService;
+import com.nl2sql.service.DatabaseService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -27,6 +28,7 @@ import java.util.regex.Pattern;
 public class DatabaseTableService {
 
     private final DatabasePoolService databasePoolService;
+    private final DatabaseService databaseService;
     
     // 表名和列名的合法字符模式
     private static final Pattern VALID_TABLE_NAME = Pattern.compile("^[a-zA-Z_][a-zA-Z0-9_]*$");
@@ -48,6 +50,16 @@ public class DatabaseTableService {
                                          List<List<Object>> rows,
                                          List<DataTypeDetectionService.ColumnTypeInfo> columnTypeInfos,
                                          Boolean overwrite) throws Exception {
+        return createTable(databaseName, tableName, headers, rows, columnTypeInfos, overwrite, null);
+    }
+
+    public CreateTableResult createTable(String databaseName,
+                                         String tableName,
+                                         List<String> headers,
+                                         List<List<Object>> rows,
+                                         List<DataTypeDetectionService.ColumnTypeInfo> columnTypeInfos,
+                                         Boolean overwrite,
+                                         Integer userId) throws Exception {
         
         // 验证表名
         if (tableName == null || tableName.trim().isEmpty()) {
@@ -61,7 +73,7 @@ public class DatabaseTableService {
                     tableName, validTableName));
         }
 
-        try (Connection conn = databasePoolService.getConnection(databaseName);
+        try (Connection conn = getConnection(databaseName, userId);
              Statement stmt = conn.createStatement()) {
             
             // 检查表是否存在
@@ -345,7 +357,11 @@ public class DatabaseTableService {
      * 检查表是否存在
      */
     public boolean checkTableExists(String databaseName, String tableName) throws Exception {
-        try (Connection conn = databasePoolService.getConnection(databaseName);
+        return checkTableExists(databaseName, tableName, null);
+    }
+
+    public boolean checkTableExists(String databaseName, String tableName, Integer userId) throws Exception {
+        try (Connection conn = getConnection(databaseName, userId);
              Statement stmt = conn.createStatement()) {
             String sql = "SELECT COUNT(*) FROM information_schema.tables " +
                          "WHERE table_schema = DATABASE() AND table_name = '" + tableName + "'";
@@ -378,8 +394,12 @@ public class DatabaseTableService {
      * @return Map<列名（清理后）, 原始列名>
      */
     public Map<String, String> getTableColumns(String databaseName, String tableName) throws Exception {
+        return getTableColumns(databaseName, tableName, null);
+    }
+
+    public Map<String, String> getTableColumns(String databaseName, String tableName, Integer userId) throws Exception {
         Map<String, String> columns = new LinkedHashMap<>();
-        try (Connection conn = databasePoolService.getConnection(databaseName);
+        try (Connection conn = getConnection(databaseName, userId);
              Statement stmt = conn.createStatement()) {
             String sql = "SELECT COLUMN_NAME FROM information_schema.COLUMNS " +
                          "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '" + tableName + "' " +
@@ -405,7 +425,14 @@ public class DatabaseTableService {
     public TableStructureMatchResult checkTableStructureMatch(String databaseName, 
                                                                String tableName,
                                                                List<String> expectedHeaders) throws Exception {
-        try (Connection conn = databasePoolService.getConnection(databaseName);
+        return checkTableStructureMatch(databaseName, tableName, expectedHeaders, null);
+    }
+
+    public TableStructureMatchResult checkTableStructureMatch(String databaseName,
+                                                               String tableName,
+                                                               List<String> expectedHeaders,
+                                                               Integer userId) throws Exception {
+        try (Connection conn = getConnection(databaseName, userId);
              Statement stmt = conn.createStatement()) {
             
             // 获取表的列信息（排除id列）
@@ -477,11 +504,19 @@ public class DatabaseTableService {
                           String tableName,
                           List<String> headers,
                           List<List<Object>> rows) throws Exception {
+        return appendData(databaseName, tableName, headers, rows, null);
+    }
+
+    public int appendData(String databaseName,
+                          String tableName,
+                          List<String> headers,
+                          List<List<Object>> rows,
+                          Integer userId) throws Exception {
         if (rows.isEmpty()) {
             return 0;
         }
         
-        try (Connection conn = databasePoolService.getConnection(databaseName);
+        try (Connection conn = getConnection(databaseName, userId);
              Statement stmt = conn.createStatement()) {
             
             // 获取表的列信息（排除 AUTO_INCREMENT 的主键列）
@@ -686,5 +721,11 @@ public class DatabaseTableService {
         private Integer rowCount;
         private Integer columnCount;
         private String error;
+    }
+
+    private Connection getConnection(String databaseName, Integer userId) throws Exception {
+        return userId != null
+            ? databaseService.getConnection(userId, databaseName)
+            : databasePoolService.getConnection(databaseName);
     }
 }

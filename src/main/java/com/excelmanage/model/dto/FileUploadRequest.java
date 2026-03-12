@@ -50,4 +50,9 @@ public class FileUploadRequest {
      * 数据库名称（默认exceldatabase）
      */
     private String databaseName = "exceldatabase";
+
+    /**
+     * 用户ID（用于数据库访问权限校验）
+     */
+    private Integer userId;
 }

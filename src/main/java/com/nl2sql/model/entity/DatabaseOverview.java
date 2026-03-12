@@ -10,14 +10,30 @@ import java.time.LocalDateTime;
  */
 @Data
 @Entity
-@Table(name = "database_overview")
+@Table(
+    name = "database_overview",
+    uniqueConstraints = @UniqueConstraint(
+        name = "uk_owner_host_db_overview",
+        columnNames = {"owner_user_id", "host_config_id", "database_name"}
+    ),
+    indexes = {
+        @Index(name = "idx_owner_host_active", columnList = "owner_user_id,host_config_id,is_active"),
+        @Index(name = "idx_owner_db", columnList = "owner_user_id,database_name")
+    }
+)
 public class DatabaseOverview {
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Integer id;
 
-    @Column(name = "database_name", nullable = false, unique = true, length = 100)
+    @Column(name = "owner_user_id")
+    private Integer ownerUserId;
+
+    @Column(name = "host_config_id")
+    private Integer hostConfigId;
+
+    @Column(name = "database_name", nullable = false, length = 100)
     private String databaseName;
 
     @Column(name = "description", columnDefinition = "TEXT")

@@ -27,9 +27,9 @@ public class AnnotationController {
 
     @GetMapping("/databases")
     @Operation(summary = "获取所有数据库列表")
-    public ApiResponse<List<String>> getDatabases() {
+    public ApiResponse<List<String>> getDatabases(@RequestParam Integer userId) {
         try {
-            List<String> databases = databaseService.getAllDatabases();
+            List<String> databases = databaseService.getAllDatabases(userId);
             return ApiResponse.success(databases);
         } catch (Exception e) {
             log.error("❌ 获取数据库列表错误: {}", e.getMessage());
@@ -39,9 +39,10 @@ public class AnnotationController {
 
     @GetMapping("/databases/{dbName}")
     @Operation(summary = "获取指定数据库的完整结构")
-    public ApiResponse<Map<String, Object>> getDatabaseSchema(@PathVariable String dbName) {
+    public ApiResponse<Map<String, Object>> getDatabaseSchema(@PathVariable String dbName,
+                                                              @RequestParam Integer userId) {
         try {
-            Map<String, Object> schema = annotationService.getDatabaseSchema(dbName);
+            Map<String, Object> schema = annotationService.getDatabaseSchema(dbName, userId);
             
             if (schema.containsKey("error")) {
                 return ApiResponse.error((String) schema.get("error"));
@@ -64,13 +65,14 @@ public class AnnotationController {
             String tableName = request.get("table");
             String columnName = request.get("column");
             String comment = request.getOrDefault("comment", "");
+            Integer userId = request.containsKey("userId") ? Integer.valueOf(request.get("userId")) : null;
             
-            if (dbName == null || tableName == null) {
-                return ApiResponse.error("缺少必要参数: database, table");
+            if (dbName == null || tableName == null || userId == null) {
+                return ApiResponse.error("缺少必要参数: database, table, userId");
             }
             
             Map<String, Object> result = annotationService.updateAnnotation(
-                dbName, tableName, columnName, comment
+                dbName, tableName, columnName, comment, userId
             );
             
             if ((Boolean) result.getOrDefault("success", false)) {

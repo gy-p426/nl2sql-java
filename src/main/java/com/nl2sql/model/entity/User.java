@@ -12,7 +12,8 @@ import java.time.LocalDateTime;
 @Table(name = "users", indexes = {
     @Index(name = "idx_account", columnList = "account"),
     @Index(name = "idx_username", columnList = "username"),
-    @Index(name = "idx_status", columnList = "status")
+    @Index(name = "idx_status", columnList = "status"),
+    @Index(name = "idx_role", columnList = "role")
 })
 public class User {
     
@@ -50,6 +51,9 @@ public class User {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
     
+    @Column(nullable = false, length = 20, columnDefinition = "VARCHAR(20) DEFAULT 'USER'")
+    private String role = "USER";
+
     @PrePersist
     protected void onCreate() {
         createdAt = LocalDateTime.now();

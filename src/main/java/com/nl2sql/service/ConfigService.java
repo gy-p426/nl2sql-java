@@ -248,51 +248,54 @@ public class ConfigService {
         try {
             // 1. 获取所有激活的数据库主机配置
             List<DatabaseHostConfig> activeHosts = databaseHostConfigRepository.findByIsActiveTrue();
-            
-            // 2. 收集所有配置中的数据库
-            Set<String> configuredDatabases = new HashSet<>();
+
+            // 2. 收集所有配置中的“用户+主机+数据库”作用域键
+            Set<String> configuredScopeKeys = new HashSet<>();
             for (DatabaseHostConfig host : activeHosts) {
                 try {
                     List<String> databases = objectMapper.readValue(
-                        host.getDatabases(), 
+                        host.getDatabases(),
                         new TypeReference<List<String>>() {}
                     );
-                    configuredDatabases.addAll(databases);
+
+                    for (String dbName : databases) {
+                        String scopeKey = buildOverviewScopeKey(host.getOwnerUserId(), host.getId(), dbName);
+                        configuredScopeKeys.add(scopeKey);
+
+                        DatabaseOverview overview = databaseOverviewRepository
+                            .findByOwnerUserIdAndHostConfigIdAndDatabaseName(host.getOwnerUserId(), host.getId(), dbName)
+                            .orElse(new DatabaseOverview());
+
+                        overview.setOwnerUserId(host.getOwnerUserId());
+                        overview.setHostConfigId(host.getId());
+                        overview.setDatabaseName(dbName);
+                        if (overview.getDescription() == null || overview.getDescription().isBlank()) {
+                            overview.setDescription("自动创建的数据库概览");
+                        }
+                        if (overview.getTableSummary() == null) {
+                            overview.setTableSummary("");
+                        }
+                        overview.setIsActive(true);
+                        databaseOverviewRepository.save(overview);
+                    }
                 } catch (Exception e) {
                     log.warn("⚠️ 解析主机 {} 的数据库配置失败: {}", host.getName(), e.getMessage());
                 }
             }
-            
-            log.info("📋 配置中的数据库: {}", configuredDatabases);
-            
-            // 3. 获取所有数据库概览记录
+
+            // 3. 将不在当前激活配置中的作用域记录标记为 inactive
             List<DatabaseOverview> allOverviews = databaseOverviewRepository.findAll();
-            
-            // 4. 更新激活状态
             for (DatabaseOverview overview : allOverviews) {
-                boolean shouldBeActive = configuredDatabases.contains(overview.getDatabaseName());
-                if (overview.getIsActive() != shouldBeActive) {
+                if (overview.getOwnerUserId() == null || overview.getHostConfigId() == null) {
+                    continue;
+                }
+
+                String scopeKey = buildOverviewScopeKey(
+                    overview.getOwnerUserId(), overview.getHostConfigId(), overview.getDatabaseName());
+                boolean shouldBeActive = configuredScopeKeys.contains(scopeKey);
+                if (!Objects.equals(overview.getIsActive(), shouldBeActive)) {
                     overview.setIsActive(shouldBeActive);
                     databaseOverviewRepository.save(overview);
-                    log.info("🔄 更新数据库 {} 激活状态: {} -> {}", 
-                        overview.getDatabaseName(), !shouldBeActive, shouldBeActive);
-                }
-            }
-            
-            // 5. 为配置中存在但概览表中不存在的数据库创建记录
-            Set<String> existingDatabases = allOverviews.stream()
-                .map(DatabaseOverview::getDatabaseName)
-                .collect(Collectors.toSet());
-            
-            for (String dbName : configuredDatabases) {
-                if (!existingDatabases.contains(dbName)) {
-                    DatabaseOverview newOverview = new DatabaseOverview();
-                    newOverview.setDatabaseName(dbName);
-                    newOverview.setDescription("自动创建的数据库概览");
-                    newOverview.setTableSummary(""); // 需要后续刷新Schema来填充
-                    newOverview.setIsActive(true);
-                    databaseOverviewRepository.save(newOverview);
-                    log.info("➕ 为数据库 {} 创建新的概览记录", dbName);
                 }
             }
             
@@ -301,6 +304,10 @@ public class ConfigService {
         } catch (Exception e) {
             log.error("❌ 同步数据库概览表失败: {}", e.getMessage(), e);
         }
+    }
+
+    private String buildOverviewScopeKey(Integer ownerUserId, Integer hostConfigId, String dbName) {
+        return String.format("%s|%s|%s", ownerUserId, hostConfigId, dbName);
     }
 
     /**

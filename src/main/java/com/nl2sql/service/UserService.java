@@ -23,6 +23,9 @@ import java.util.*;
 @Service
 @RequiredArgsConstructor
 public class UserService {
+
+    private static final String ROLE_ADMIN = "ADMIN";
+    private static final String ROLE_USER = "USER";
     
     private final UserRepository userRepository;
     private final DatabaseService databaseService;
@@ -64,6 +67,7 @@ public class UserService {
             User user = new User();
             user.setUsername(username);
             user.setAccount(account);
+            user.setRole("USER");
             user.setPassword(encryptPassword(password));
             user.setSecurityQuestion(securityQuestion);
             user.setSecurityAnswer(securityAnswer != null ? encryptPassword(securityAnswer) : null);
@@ -334,6 +338,7 @@ public class UserService {
                     User user = new User();
                     user.setUsername(username);
                     user.setAccount(account);
+                    user.setRole("USER");
                     
                     if (password != null && !password.isEmpty()) {
                         // 假设导入的密码已经是加密的，如果不是，需要加密
@@ -497,6 +502,64 @@ public class UserService {
         
         return result;
     }
+
+    /**
+     * 管理员更新用户角色
+     */
+    @Transactional
+    public Map<String, Object> updateUserRole(Integer operatorUserId, Integer targetUserId, String role) {
+        Map<String, Object> result = new HashMap<>();
+
+        try {
+            if (operatorUserId == null || targetUserId == null || role == null || role.trim().isEmpty()) {
+                result.put("success", false);
+                result.put("message", "operatorUserId、targetUserId 和 role 不能为空");
+                return result;
+            }
+
+            String normalizedRole = role.trim().toUpperCase(Locale.ROOT);
+            if (!ROLE_ADMIN.equals(normalizedRole) && !ROLE_USER.equals(normalizedRole)) {
+                result.put("success", false);
+                result.put("message", "角色仅支持 ADMIN 或 USER");
+                return result;
+            }
+
+            Optional<User> operatorOpt = userRepository.findById(operatorUserId);
+            if (operatorOpt.isEmpty()) {
+                result.put("success", false);
+                result.put("message", "操作用户不存在");
+                return result;
+            }
+
+            User operator = operatorOpt.get();
+            if (!ROLE_ADMIN.equalsIgnoreCase(operator.getRole())) {
+                result.put("success", false);
+                result.put("message", "仅管理员可修改用户角色");
+                return result;
+            }
+
+            Optional<User> targetOpt = userRepository.findById(targetUserId);
+            if (targetOpt.isEmpty()) {
+                result.put("success", false);
+                result.put("message", "目标用户不存在");
+                return result;
+            }
+
+            User target = targetOpt.get();
+            target.setRole(normalizedRole);
+            userRepository.save(target);
+
+            result.put("success", true);
+            result.put("message", "用户角色更新成功");
+            result.put("user", toMap(target));
+        } catch (Exception e) {
+            log.error("更新用户角色失败", e);
+            result.put("success", false);
+            result.put("message", "更新用户角色失败: " + e.getMessage());
+        }
+
+        return result;
+    }
     
     /**
      * 转换为Map（不包含敏感信息）
@@ -506,6 +569,7 @@ public class UserService {
         map.put("id", user.getId());
         map.put("username", user.getUsername());
         map.put("account", user.getAccount());
+        map.put("role", user.getRole());
         map.put("email", user.getEmail());
         map.put("phone", user.getPhone());
         map.put("securityQuestion", user.getSecurityQuestion());

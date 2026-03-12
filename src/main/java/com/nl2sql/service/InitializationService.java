@@ -89,7 +89,7 @@ public class InitializationService implements CommandLineRunner {
                 
                 for (String dbName : databases) {
                     log.info("📋 导出数据库 {} 的 Schema", dbName);
-                    schemaService.exportDatabaseSchema(dbName, true); // 强制刷新
+                    schemaService.exportDatabaseSchema(hostConfig.getOwnerUserId(), hostConfig.getId(), dbName, true); // 强制刷新
                 }
                 
             } catch (Exception e) {
@@ -117,7 +117,11 @@ public class InitializationService implements CommandLineRunner {
                 
                 for (String dbName : databases) {
                     // 从数据库读取Schema信息
-                    List<DatabaseSchema> schemas = schemaRepository.findByDatabaseName(dbName);
+                    List<DatabaseSchema> schemas = schemaRepository.findByOwnerUserIdAndHostConfigIdAndDatabaseName(
+                        hostConfig.getOwnerUserId(),
+                        hostConfig.getId(),
+                        dbName
+                    );
                     
                     if (!schemas.isEmpty()) {
                         StringBuilder tableSummary = new StringBuilder();
@@ -134,9 +138,12 @@ public class InitializationService implements CommandLineRunner {
                         }
                         
                         // 保存或更新数据库概览
-                        DatabaseOverview overview = overviewRepository.findByDatabaseName(dbName)
+                        DatabaseOverview overview = overviewRepository.findByOwnerUserIdAndHostConfigIdAndDatabaseName(
+                                hostConfig.getOwnerUserId(), hostConfig.getId(), dbName)
                             .orElse(new DatabaseOverview());
-                        
+
+                        overview.setOwnerUserId(hostConfig.getOwnerUserId());
+                        overview.setHostConfigId(hostConfig.getId());
                         overview.setDatabaseName(dbName);
                         overview.setDescription(String.format("数据库名：%s", dbName));
                         overview.setTableSummary(tableSummary.toString());

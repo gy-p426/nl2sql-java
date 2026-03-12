@@ -56,6 +56,7 @@ public class ExcelManageController {
     @Operation(summary = "上传Excel/CSV文件并创建数据库表")
     public ApiResponse<FileUploadResponse> uploadFile(
             @RequestParam("file") MultipartFile file,
+            @RequestParam("userId") Integer userId,
             @RequestParam(value = "tableNamePrefix", required = false) String tableNamePrefix,
             @RequestParam(value = "tableNames", required = false) String tableNames,
             @RequestParam(value = "overwrite", required = false, defaultValue = "false") Boolean overwrite,
@@ -66,6 +67,10 @@ public class ExcelManageController {
         
         log.info("📤 收到文件上传请求 - 文件名: {}, 大小: {} bytes", 
                 file.getOriginalFilename(), file.getSize());
+
+        if (userId == null) {
+            return ApiResponse.error("用户账号信息不能为空");
+        }
         
         try {
             // 构建请求对象
@@ -77,6 +82,7 @@ public class ExcelManageController {
             request.setSkipRows(skipRows);
             request.setMaxRows(maxRows);
             request.setDatabaseName(databaseName);
+            request.setUserId(userId);
             
             // 处理文件上传
             FileUploadResponse response = excelManageService.uploadAndCreateTables(file, request);

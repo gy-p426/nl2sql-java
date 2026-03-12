@@ -75,7 +75,7 @@ public class NL2SQLService {
             // 5. 选择候选表
             log.info("🔍 步骤5: 选择候选表");
             List<String> candidateTables = schemaService.selectCandidateTables(
-                databaseKeywords, selectedDatabases, 10
+                databaseKeywords, selectedDatabases, 10, userId
             );
             
             if (candidateTables.isEmpty()) {
@@ -231,9 +231,8 @@ public class NL2SQLService {
             }
 
             // 1. 获取所有激活的数据库概览
-            List<DatabaseOverview> overviews = databaseOverviewRepository.findByIsActiveTrue().stream()
-                .filter(overview -> allowedDatabases.contains(overview.getDatabaseName()))
-                .collect(Collectors.toList());
+            List<DatabaseOverview> overviews = databaseOverviewRepository
+                .findByOwnerUserIdAndDatabaseNameInAndIsActiveTrue(userId, allowedDatabases);
             
             log.info("📋 数据库概览表中激活的数据库数量: {}", overviews.size());
             List<String> activeDbNames = overviews.stream()
@@ -465,7 +464,7 @@ public class NL2SQLService {
             // 5. 选择候选表
             log.info("🔍 步骤5: 选择候选表");
             List<String> candidateTables = schemaService.selectCandidateTables(
-                databaseKeywords, selectedDatabases, 10
+                databaseKeywords, selectedDatabases, 10, userId
             );
             
             long executionTime = System.currentTimeMillis() - startTime;

@@ -26,8 +26,8 @@ public class AnnotationService {
     /**
      * 获取数据库 Schema（包含自定义注释）
      */
-    public Map<String, Object> getDatabaseSchema(String dbName) {
-        try (Connection conn = databaseService.getConnection(dbName);
+    public Map<String, Object> getDatabaseSchema(String dbName, Integer userId) {
+        try (Connection conn = databaseService.getConnection(userId, dbName);
              Statement stmt = conn.createStatement()) {
             
             Map<String, Object> result = new HashMap<>();
@@ -50,11 +50,11 @@ public class AnnotationService {
                 Map<String, Object> tableInfo = new HashMap<>();
                 tableInfo.put("table_name", tableName);
                 tableInfo.put("db_comment", rs.getString("TABLE_COMMENT"));
-                tableInfo.put("custom_comment", getCustomAnnotation(dbName, tableName, null));
+                tableInfo.put("custom_comment", getCustomAnnotation(dbName, tableName, null, userId));
                 tableInfo.put("table_rows", rs.getInt("TABLE_ROWS"));
                 
                 // 获取列信息
-                tableInfo.put("columns", getTableColumns(dbName, tableName));
+                tableInfo.put("columns", getTableColumns(dbName, tableName, userId));
                 
                 tables.add(tableInfo);
             }
@@ -75,10 +75,17 @@ public class AnnotationService {
      */
     private List<Map<String, Object>> getTableColumns(String dbName, String tableName) 
             throws Exception {
+        return getTableColumns(dbName, tableName, null);
+    }
+
+    private List<Map<String, Object>> getTableColumns(String dbName, String tableName, Integer userId)
+            throws Exception {
         
         List<Map<String, Object>> columns = new ArrayList<>();
         
-        try (Connection conn = databaseService.getConnection(dbName);
+        try (Connection conn = userId != null
+                ? databaseService.getConnection(userId, dbName)
+                : databaseService.getConnection(dbName);
              Statement stmt = conn.createStatement()) {
             
             String sql = String.format("""
@@ -96,7 +103,7 @@ public class AnnotationService {
                 Map<String, Object> columnInfo = new HashMap<>();
                 columnInfo.put("column_name", columnName);
                 columnInfo.put("db_comment", rs.getString("COLUMN_COMMENT"));
-                columnInfo.put("custom_comment", getCustomAnnotation(dbName, tableName, columnName));
+                columnInfo.put("custom_comment", getCustomAnnotation(dbName, tableName, columnName, userId));
                 columnInfo.put("column_type", rs.getString("COLUMN_TYPE"));
                 columnInfo.put("data_type", rs.getString("DATA_TYPE"));
                 columnInfo.put("is_nullable", "YES".equals(rs.getString("IS_NULLABLE")));
@@ -114,17 +121,25 @@ public class AnnotationService {
      * 获取自定义注释
      */
     public String getCustomAnnotation(String dbName, String tableName, String columnName) {
+        return getCustomAnnotation(dbName, tableName, columnName, null);
+    }
+
+    public String getCustomAnnotation(String dbName, String tableName, String columnName, Integer userId) {
         try {
             Optional<CustomAnnotation> annotation;
             
             if (columnName == null) {
                 // 查找表注释
-                annotation = annotationRepository.findByDatabaseNameAndTableNameAndColumnNameIsNull(
-                    dbName, tableName);
+                annotation = userId != null
+                    ? annotationRepository.findByOwnerUserIdAndDatabaseNameAndTableNameAndColumnNameIsNull(
+                        userId, dbName, tableName)
+                    : annotationRepository.findByDatabaseNameAndTableNameAndColumnNameIsNull(dbName, tableName);
             } else {
                 // 查找列注释
-                annotation = annotationRepository.findByDatabaseNameAndTableNameAndColumnName(
-                    dbName, tableName, columnName);
+                annotation = userId != null
+                    ? annotationRepository.findByOwnerUserIdAndDatabaseNameAndTableNameAndColumnName(
+                        userId, dbName, tableName, columnName)
+                    : annotationRepository.findByDatabaseNameAndTableNameAndColumnName(dbName, tableName, columnName);
             }
             
             return annotation.map(CustomAnnotation::getCustomComment).orElse("");
@@ -140,22 +155,43 @@ public class AnnotationService {
     @Transactional
     public Map<String, Object> updateAnnotation(
             String dbName, String tableName, String columnName, String comment) {
+        return updateAnnotation(dbName, tableName, columnName, comment, null);
+    }
+
+    @Transactional
+    public Map<String, Object> updateAnnotation(
+            String dbName, String tableName, String columnName, String comment, Integer userId) {
         
         try {
+            if (userId != null) {
+                try (Connection ignored = databaseService.getConnection(userId, dbName)) {
+                    // 仅用于校验用户是否有该数据库访问权限
+                }
+            }
+
             CustomAnnotation annotation;
             
             if (columnName == null) {
                 // 更新表注释
-                annotation = annotationRepository.findByDatabaseNameAndTableNameAndColumnNameIsNull(
-                    dbName, tableName).orElse(new CustomAnnotation());
+                annotation = userId != null
+                    ? annotationRepository.findByOwnerUserIdAndDatabaseNameAndTableNameAndColumnNameIsNull(
+                        userId, dbName, tableName).orElse(new CustomAnnotation())
+                    : annotationRepository.findByDatabaseNameAndTableNameAndColumnNameIsNull(
+                        dbName, tableName).orElse(new CustomAnnotation());
                 log.info("✏️ 更新表注释: {}.{}", dbName, tableName);
             } else {
                 // 更新列注释
-                annotation = annotationRepository.findByDatabaseNameAndTableNameAndColumnName(
-                    dbName, tableName, columnName).orElse(new CustomAnnotation());
+                annotation = userId != null
+                    ? annotationRepository.findByOwnerUserIdAndDatabaseNameAndTableNameAndColumnName(
+                        userId, dbName, tableName, columnName).orElse(new CustomAnnotation())
+                    : annotationRepository.findByDatabaseNameAndTableNameAndColumnName(
+                        dbName, tableName, columnName).orElse(new CustomAnnotation());
                 log.info("✏️ 更新列注释: {}.{}.{}", dbName, tableName, columnName);
             }
             
+            if (userId != null) {
+                annotation.setOwnerUserId(userId);
+            }
             annotation.setDatabaseName(dbName);
             annotation.setTableName(tableName);
             annotation.setColumnName(columnName);
@@ -179,10 +215,19 @@ public class AnnotationService {
     }
 
     /**
+     * 重新加载注释状态
+     *
+     * 当前注释已持久化在数据库中，此方法保留为控制器触发入口。
+     */
+    public void reloadAnnotationsState() {
+        log.info("🔄 重新加载注释状态（数据库模式，无需文件加载）");
+    }
+
+    /**
      * 加载注释（已废弃，保留用于兼容）
      */
     @Deprecated
     public void loadAnnotations() {
-        log.debug("📂 注释已从数据库加载，无需文件操作");
+        reloadAnnotationsState();
     }
 }

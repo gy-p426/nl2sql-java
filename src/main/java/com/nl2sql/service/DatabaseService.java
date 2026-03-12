@@ -218,7 +218,17 @@ public class DatabaseService {
             }
         }
 
-        return allDatabases.isEmpty() ? null : allDatabases.get(0);
+        if (allDatabases.isEmpty()) {
+            return null;
+        }
+
+        if (allDatabases.size() == 1) {
+            // 单库用户可兼容未带库名前缀SQL。
+            return allDatabases.get(0);
+        }
+
+        log.warn("⚠️ [user={}] SQL未显式指定数据库且用户可访问多库，拒绝自动回退。SQL={}", userId, sql);
+        return null;
     }
 
     /**
@@ -349,9 +359,8 @@ public class DatabaseService {
             }
 
             // 仅保留用户可访问数据库的概览
-            List<DatabaseOverview> overviews = databaseOverviewRepository.findByIsActiveTrue().stream()
-                .filter(overview -> allowedDatabases.contains(overview.getDatabaseName()))
-                .collect(Collectors.toList());
+            List<DatabaseOverview> overviews = databaseOverviewRepository
+                .findByOwnerUserIdAndDatabaseNameInAndIsActiveTrue(userId, allowedDatabases);
 
             if (overviews.isEmpty()) {
                 log.warn("⚠️ 用户 {} 没有可用数据库概览，返回用户可访问数据库", userId);

@@ -99,7 +99,7 @@ public class StreamingService {
             ), startTime);
             
             List<String> candidateTables = schemaService.selectCandidateTablesForDatabases(
-                databaseKeywords, selectedDatabases
+                databaseKeywords, selectedDatabases, userId
             );
             
             if (candidateTables == null || candidateTables.isEmpty()) {

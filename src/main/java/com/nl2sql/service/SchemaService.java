@@ -58,12 +58,27 @@ public class SchemaService {
      */
     @Transactional
     public void exportDatabaseSchema(String dbName, boolean forceRefresh) {
+        exportDatabaseSchema(null, null, dbName, forceRefresh);
+    }
+
+    @Transactional
+    public void exportDatabaseSchema(Integer ownerUserId, Integer hostConfigId, String dbName, boolean forceRefresh) {
         try {
             // 检查是否需要刷新
             if (!forceRefresh) {
+                String countSql = ownerUserId == null
+                    ? "SELECT COUNT(*) FROM database_schema WHERE database_name = ?"
+                    : "SELECT COUNT(*) FROM database_schema WHERE owner_user_id = ? AND host_config_id = ? AND database_name = ?";
+
                 try (Connection conn = primaryDataSource.getConnection();
-                     PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM database_schema WHERE database_name = ?")) {
-                    ps.setString(1, dbName);
+                     PreparedStatement ps = conn.prepareStatement(countSql)) {
+                    if (ownerUserId == null) {
+                        ps.setString(1, dbName);
+                    } else {
+                        ps.setInt(1, ownerUserId);
+                        ps.setInt(2, hostConfigId);
+                        ps.setString(3, dbName);
+                    }
                     ResultSet rs = ps.executeQuery();
                     if (rs.next() && rs.getInt(1) > 0) {
                         log.debug("Schema 数据已存在，跳过: {}", dbName);
@@ -75,21 +90,39 @@ public class SchemaService {
             // 如果强制刷新，先删除旧数据
             if (forceRefresh) {
                 try (Connection conn = primaryDataSource.getConnection()) {
-                    // 删除旧的表结构数据
-                    try (PreparedStatement ps = conn.prepareStatement("DELETE FROM table_columns WHERE database_name = ?")) {
-                        ps.setString(1, dbName);
+                    String deleteColumnsSql = ownerUserId == null
+                        ? "DELETE FROM table_columns WHERE database_name = ?"
+                        : "DELETE FROM table_columns WHERE owner_user_id = ? AND host_config_id = ? AND database_name = ?";
+                    try (PreparedStatement ps = conn.prepareStatement(deleteColumnsSql)) {
+                        if (ownerUserId == null) {
+                            ps.setString(1, dbName);
+                        } else {
+                            ps.setInt(1, ownerUserId);
+                            ps.setInt(2, hostConfigId);
+                            ps.setString(3, dbName);
+                        }
                         ps.executeUpdate();
                     }
-                    try (PreparedStatement ps = conn.prepareStatement("DELETE FROM database_schema WHERE database_name = ?")) {
-                        ps.setString(1, dbName);
+
+                    String deleteSchemaSql = ownerUserId == null
+                        ? "DELETE FROM database_schema WHERE database_name = ?"
+                        : "DELETE FROM database_schema WHERE owner_user_id = ? AND host_config_id = ? AND database_name = ?";
+                    try (PreparedStatement ps = conn.prepareStatement(deleteSchemaSql)) {
+                        if (ownerUserId == null) {
+                            ps.setString(1, dbName);
+                        } else {
+                            ps.setInt(1, ownerUserId);
+                            ps.setInt(2, hostConfigId);
+                            ps.setString(3, dbName);
+                        }
                         ps.executeUpdate();
                     }
-                    log.info("🗑️ 已删除数据库 {} 的旧Schema数据", dbName);
+                    log.info("🗑️ 已删除数据库 {} 的旧Schema数据（owner={}, host={}）", dbName, ownerUserId, hostConfigId);
                 }
             }
             
             // 导出Schema数据
-            exportSchemaWithNativeSQL(dbName);
+            exportSchemaWithNativeSQL(ownerUserId, hostConfigId, dbName);
             
         } catch (Exception e) {
             log.error("❌ 导出数据库 {} 结构时出错: {}", dbName, e.getMessage(), e);
@@ -99,8 +132,10 @@ public class SchemaService {
     /**
      * 使用原生SQL导出Schema数据，避免Lombok setter问题
      */
-    private void exportSchemaWithNativeSQL(String dbName) throws Exception {
-        try (Connection sourceConn = databaseService.getConnection(dbName);
+    private void exportSchemaWithNativeSQL(Integer ownerUserId, Integer hostConfigId, String dbName) throws Exception {
+        try (Connection sourceConn = ownerUserId == null
+                ? databaseService.getConnection(dbName)
+                : databaseService.getConnection(ownerUserId, dbName);
              Connection targetConn = primaryDataSource.getConnection()) {
             
             // 获取主键信息
@@ -134,15 +169,15 @@ public class SchemaService {
                 // 准备插入语句 - 使用RETURN_GENERATED_KEYS获取生成的ID
                 String insertSchemaSql = """
                     INSERT INTO database_schema 
-                    (database_name, table_name, table_comment, primary_keys, table_rows, created_at, updated_at) 
-                    VALUES (?, ?, ?, ?, ?, NOW(), NOW())
+                    (owner_user_id, host_config_id, database_name, table_name, table_comment, primary_keys, table_rows, created_at, updated_at) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                     """;
                 
                 String insertColumnSql = """
                     INSERT INTO table_columns 
-                    (schema_id, database_name, table_name, column_name, column_type, data_type, column_comment, 
+                    (schema_id, owner_user_id, host_config_id, database_name, table_name, column_name, column_type, data_type, column_comment, 
                      is_nullable, column_default, column_key, ordinal_position, created_at, updated_at) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())
                     """;
                 
                 try (PreparedStatement schemaPs = targetConn.prepareStatement(insertSchemaSql, Statement.RETURN_GENERATED_KEYS);
@@ -157,15 +192,22 @@ public class SchemaService {
                         
                         // 插入表信息（每个表只插入一次）
                         if (!tableSchemaIds.containsKey(tableName)) {
-                            schemaPs.setString(1, dbName);
-                            schemaPs.setString(2, tableName);
-                            schemaPs.setString(3, rs.getString("TABLE_COMMENT"));
+                            if (ownerUserId == null) {
+                                schemaPs.setNull(1, java.sql.Types.INTEGER);
+                                schemaPs.setNull(2, java.sql.Types.INTEGER);
+                            } else {
+                                schemaPs.setInt(1, ownerUserId);
+                                schemaPs.setInt(2, hostConfigId);
+                            }
+                            schemaPs.setString(3, dbName);
+                            schemaPs.setString(4, tableName);
+                            schemaPs.setString(5, rs.getString("TABLE_COMMENT"));
                             
                             // 设置主键
                             List<String> pks = primaryKeys.get(tableName);
-                            schemaPs.setString(4, pks != null ? String.join(",", pks) : null);
+                            schemaPs.setString(6, pks != null ? String.join(",", pks) : null);
                             
-                            schemaPs.setLong(5, rs.getLong("TABLE_ROWS"));
+                            schemaPs.setLong(7, rs.getLong("TABLE_ROWS"));
                             schemaPs.executeUpdate();
                             
                             // 获取生成的schema_id
@@ -196,16 +238,23 @@ public class SchemaService {
                                 Integer schemaId = tableSchemaIds.get(tableName);
                                 if (schemaId != null) {
                                     columnPs.setInt(1, schemaId);  // schema_id
-                                    columnPs.setString(2, dbName);
-                                    columnPs.setString(3, tableName);
-                                    columnPs.setString(4, columnName);
-                                    columnPs.setString(5, rs.getString("COLUMN_TYPE"));
-                                    columnPs.setString(6, rs.getString("DATA_TYPE"));
-                                    columnPs.setString(7, columnComment);
-                                    columnPs.setBoolean(8, "YES".equals(rs.getString("IS_NULLABLE")));
-                                    columnPs.setString(9, rs.getString("COLUMN_DEFAULT"));
-                                    columnPs.setString(10, rs.getString("COLUMN_KEY"));
-                                    columnPs.setInt(11, rs.getInt("ORDINAL_POSITION"));
+                                    if (ownerUserId == null) {
+                                        columnPs.setNull(2, java.sql.Types.INTEGER);
+                                        columnPs.setNull(3, java.sql.Types.INTEGER);
+                                    } else {
+                                        columnPs.setInt(2, ownerUserId);
+                                        columnPs.setInt(3, hostConfigId);
+                                    }
+                                    columnPs.setString(4, dbName);
+                                    columnPs.setString(5, tableName);
+                                    columnPs.setString(6, columnName);
+                                    columnPs.setString(7, rs.getString("COLUMN_TYPE"));
+                                    columnPs.setString(8, rs.getString("DATA_TYPE"));
+                                    columnPs.setString(9, columnComment);
+                                    columnPs.setBoolean(10, "YES".equals(rs.getString("IS_NULLABLE")));
+                                    columnPs.setString(11, rs.getString("COLUMN_DEFAULT"));
+                                    columnPs.setString(12, rs.getString("COLUMN_KEY"));
+                                    columnPs.setInt(13, rs.getInt("ORDINAL_POSITION"));
                                     columnPs.executeUpdate();
                                     
                                     columnCount++;
@@ -226,6 +275,13 @@ public class SchemaService {
     public List<String> selectCandidateTablesForDatabases(
             Map<String, Map<String, List<String>>> databaseKeywords,
             List<String> selectedDatabases) {
+        return selectCandidateTablesForDatabases(databaseKeywords, selectedDatabases, null);
+    }
+
+    public List<String> selectCandidateTablesForDatabases(
+            Map<String, Map<String, List<String>>> databaseKeywords,
+            List<String> selectedDatabases,
+            Integer userId) {
         
         List<String> allCandidateTables = new ArrayList<>();
         
@@ -235,7 +291,7 @@ public class SchemaService {
                     dbName, Map.of("keywords_cn", List.of())
             );
             
-            List<String> dbTables = selectTablesForDatabase(dbName, keywords, 10);
+            List<String> dbTables = selectTablesForDatabase(dbName, keywords, 10, userId);
             allCandidateTables.addAll(dbTables);
         }
         
@@ -249,6 +305,14 @@ public class SchemaService {
             Map<String, Map<String, List<String>>> databaseKeywords,
             List<String> selectedDatabases,
             int maxTables) {
+        return selectCandidateTables(databaseKeywords, selectedDatabases, maxTables, null);
+    }
+
+    public List<String> selectCandidateTables(
+            Map<String, Map<String, List<String>>> databaseKeywords,
+            List<String> selectedDatabases,
+            int maxTables,
+            Integer userId) {
         
         List<String> allCandidateTables = new ArrayList<>();
         
@@ -258,7 +322,7 @@ public class SchemaService {
                     dbName, Map.of("keywords_cn", List.of())
             );
             
-            List<String> dbTables = selectTablesForDatabase(dbName, keywords, maxTables);
+            List<String> dbTables = selectTablesForDatabase(dbName, keywords, maxTables, userId);
             allCandidateTables.addAll(dbTables);
         }
         
@@ -271,11 +335,12 @@ public class SchemaService {
     private List<String> selectTablesForDatabase(
             String dbName, 
             Map<String, List<String>> keywords, 
-            int maxTables) {
+            int maxTables,
+            Integer userId) {
         
         try {
             // 直接从数据库构建表信息字符串，避免复杂的实体关系
-            List<String> tableLines = buildTableLinesDirectly(dbName);
+            List<String> tableLines = buildTableLinesDirectly(dbName, userId);
             
             if (tableLines.isEmpty()) {
                 System.out.println("⚠️ 数据库 " + dbName + " 的Schema数据不存在");
@@ -330,10 +395,12 @@ public class SchemaService {
     /**
      * 直接从数据库构建表信息字符串列表 - 修复ResultSet关闭问题
      */
-    private List<String> buildTableLinesDirectly(String dbName) {
+    private List<String> buildTableLinesDirectly(String dbName, Integer userId) {
         List<String> tableLines = new ArrayList<>();
         
-        try (Connection conn = databaseService.getConnection(dbName)) {
+        try (Connection conn = userId == null
+                ? databaseService.getConnection(dbName)
+                : databaseService.getConnection(userId, dbName)) {
             
             // 分别获取不同的信息，避免ResultSet冲突
             Map<String, String> tableComments = getTableComments(conn, dbName);

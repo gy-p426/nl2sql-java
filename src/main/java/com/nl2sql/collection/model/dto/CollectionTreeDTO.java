@@ -80,7 +80,7 @@ public class CollectionTreeDTO {
 
     /**
      * 构建收藏树形节点（静态工厂方法）
-     * @param favoriteId 收藏ID（对应user_favorites表的id，Integer类型）
+     * @param favoriteId 收藏ID（对应user_favorites表的id，Long类型）
      * @param favoriteName 收藏名称
      * @param categoryId 关联的目录ID
      * @return 收藏树形节点DTO
