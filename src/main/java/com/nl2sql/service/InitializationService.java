@@ -105,7 +105,7 @@ public class InitializationService implements CommandLineRunner {
      * 只保留表注释，不加入表名
      */
     @Transactional
-    private void generateDatabaseOverviews(List<DatabaseHostConfig> hostConfigs) {
+    protected void generateDatabaseOverviews(List<DatabaseHostConfig> hostConfigs) {
         log.info("📋 生成数据库概览...");
         
         try {
