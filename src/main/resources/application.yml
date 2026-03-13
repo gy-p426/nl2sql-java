@@ -65,6 +65,18 @@ nl2sql:
         maximum-pool-size: 10
         minimum-idle: 5
         connection-timeout: 30000
+    - name: oracle1
+      host: localhost
+      port: 1521
+      username: sys
+      password: oracle
+      db-type: oracle
+      databases:
+        - ORCL
+      pool:
+        maximum-pool-size: 10
+        minimum-idle: 5
+        connection-timeout: 30000
   
   # 火山引擎配置（保留兼容性）
   volcano-engine:

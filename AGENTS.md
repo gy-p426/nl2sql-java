@@ -23,6 +23,7 @@
 - LLM 按任务路由：`CONTINUOUS_QUESTION`、`DATABASE_SELECTION`、`KEYWORD_EXTRACTION`、`SQL_GENERATION`、`SQL_EVALUATION`，由 `LLMRouter` + `nl2sql.llm.*` 配置驱动。 / Task-based LLM routing is config-driven.
 - Volcano Engine 与 Ollama 共存，服务层内置提供方切换/降级逻辑（`src/main/java/com/nl2sql/service/DatabaseService.java`）。 / Volcano/Ollama coexist with fallback behavior.
 - 系统元数据与运行配置依赖 MySQL，参考结构文件：`src/main/resources/schema.sql`、`src/main/resources/schema-config.sql`。 / MySQL is required for metadata and runtime config.
+- 支持 Oracle 数据库连接和 SQL 生成，通过 `db_type` 配置指定数据库类型（`src/main/java/com/nl2sql/service/DatabasePoolService.java`）。 / Oracle database support is now available.
 - 导出接口会先移除 SQL 的 `LIMIT` 再执行全量导出，支持 CSV/Excel 流式输出（`src/main/java/com/nl2sql/service/ExportService.java`）。 / Export removes `LIMIT` before full export.
 
 ## Developer workflows (verified from files/docs)
@@ -36,4 +37,6 @@
 - 查询质量依赖元数据表是否已初始化；出现选库/选表异常时先检查初始化链路。 / Metadata initialization strongly affects query quality.
 - `application.yml` 含默认样例密钥/占位值，修改敏感配置时优先走环境变量覆盖。 / Prefer env overrides for secrets/config-sensitive changes.
 - 流式响应字段结构（`step`、`status`、`timestamp` 及相关 payload）需保持稳定，前端流程文档依赖它（`query-stream 流程.md`）。 / Keep SSE payload shape stable for frontend compatibility.
+- Oracle 数据库配置：需要在 `application.yml` 中设置 `db-type: oracle`，并确保 Oracle JDBC 驱动已添加到依赖中。 / Oracle database configuration requires setting `db-type: oracle` in application.yml.
+- Oracle SQL 语法：Oracle 使用 `ROWNUM` 而不是 `LIMIT` 来限制结果数量，系统会自动处理这种差异。 / Oracle uses `ROWNUM` instead of `LIMIT` for result limiting.
 
