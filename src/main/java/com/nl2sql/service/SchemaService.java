@@ -409,7 +409,9 @@ public class SchemaService {
                 }
                 
                 if (vectorScore > 0) {
-                    String tableName = tableLine.split("\\|\\|")[0];
+                    // 提取表名（格式：dbName.tableName||...）
+                    int separatorIdx = tableLine.indexOf("||");
+                    String tableName = separatorIdx > 0 ? tableLine.substring(0, separatorIdx) : tableLine;
                     log.debug("📊 表 {} - 关键词得分: {}, 向量得分: {}, 总分: {}",
                             tableName, String.format("%.1f", keywordScore),
                             String.format("%.1f", vectorScore), String.format("%.1f", totalScore));
@@ -687,13 +689,6 @@ public class SchemaService {
         }
         
         return score;
-    }
-
-    /**
-     * 计算表得分，结合关键词匹配与向量相似度
-     */
-    private double calculateTableScore(String tableLine, List<String> keywords) {
-        return calculateKeywordScore(tableLine, keywords);
     }
 
     /**

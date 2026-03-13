@@ -219,7 +219,7 @@ public class EmbeddingService {
             norm += v * v;
         }
         norm = Math.sqrt(norm);
-        if (norm > 0) {
+        if (norm > 1e-10) {
             for (int i = 0; i < vector.length; i++) {
                 vector[i] /= norm;
             }
