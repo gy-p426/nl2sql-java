@@ -12,7 +12,7 @@ logging:
 nl2sql:
   databases:
     - name: db1
-      host: localhost
+      host: 192.168.1.106
       port: 3306
       username: root
       password: root

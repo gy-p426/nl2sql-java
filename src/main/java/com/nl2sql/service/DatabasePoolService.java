@@ -126,11 +126,8 @@ public class DatabasePoolService {
 
             switch (dbType.toLowerCase()) {
                 case "oracle":
-                    if (host.contains(":")) {
-                        jdbcUrl = String.format("jdbc:oracle:thin:@%s:%s", host, dbName);
-                    } else {
-                        jdbcUrl = String.format("jdbc:oracle:thin:@%s:%d:%s", host, port, dbName);
-                    }
+                    // 对于Oracle，dbName实际上是SID
+                    jdbcUrl = String.format("jdbc:oracle:thin:@%s:%d:%s", host, port, dbName);
                     driverClassName = "oracle.jdbc.OracleDriver";
                     break;
                 case "mysql":

@@ -138,30 +138,61 @@ public class SchemaService {
                 : databaseService.getConnection(ownerUserId, dbName);
              Connection targetConn = primaryDataSource.getConnection()) {
             
+            // 获取数据库类型
+            String dbType = databaseService.getDatabaseType(dbName);
+            
             // 获取主键信息
-            Map<String, List<String>> primaryKeys = getPrimaryKeysMap(sourceConn, dbName);
+            Map<String, List<String>> primaryKeys = getPrimaryKeysMap(sourceConn, dbName, dbType);
             
             // 获取表和列信息
-            String sql = String.format("""
-                SELECT 
-                    t.TABLE_NAME,
-                    t.TABLE_COMMENT,
-                    t.TABLE_ROWS,
-                    c.COLUMN_NAME,
-                    c.COLUMN_COMMENT,
-                    c.COLUMN_TYPE,
-                    c.DATA_TYPE,
-                    c.IS_NULLABLE,
-                    c.COLUMN_DEFAULT,
-                    c.COLUMN_KEY,
-                    c.ORDINAL_POSITION
-                FROM INFORMATION_SCHEMA.TABLES t
-                LEFT JOIN INFORMATION_SCHEMA.COLUMNS c 
-                    ON t.TABLE_NAME = c.TABLE_NAME 
-                    AND t.TABLE_SCHEMA = c.TABLE_SCHEMA
-                WHERE t.TABLE_SCHEMA = '%s'
-                ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
-                """, dbName);
+            String sql;
+            if ("oracle".equals(dbType)) {
+                // Oracle 查询
+                sql = "SELECT " +
+                    "    t.TABLE_NAME, " +
+                    "    tc.COMMENTS AS TABLE_COMMENT, " +
+                    "    t.NUM_ROWS AS TABLE_ROWS, " +
+                    "    c.COLUMN_NAME, " +
+                    "    cc.COMMENTS AS COLUMN_COMMENT, " +
+                    "    c.DATA_TYPE AS COLUMN_TYPE, " +
+                    "    c.DATA_TYPE, " +
+                    "    c.NULLABLE AS IS_NULLABLE, " +
+                    "    c.DATA_DEFAULT AS COLUMN_DEFAULT, " +
+                    "    CASE WHEN c.COLUMN_NAME IN (SELECT COLUMN_NAME FROM ALL_CONSTRAINTS cons, ALL_CONS_COLUMNS cols " +
+                    "         WHERE cons.OWNER = '" + dbName.toUpperCase() + "' AND cons.TABLE_NAME = t.TABLE_NAME " +
+                    "         AND cons.CONSTRAINT_TYPE = 'P' AND cons.OWNER = cols.OWNER " +
+                    "         AND cons.TABLE_NAME = cols.TABLE_NAME AND cons.CONSTRAINT_NAME = cols.CONSTRAINT_NAME) " +
+                    "    THEN 'PRI' ELSE '' END AS COLUMN_KEY, " +
+                    "    c.COLUMN_ID AS ORDINAL_POSITION " +
+                    "FROM ALL_TABLES t " +
+                    "LEFT JOIN ALL_TAB_COLUMNS c ON t.OWNER = c.OWNER AND t.TABLE_NAME = c.TABLE_NAME " +
+                    "LEFT JOIN ALL_TAB_COMMENTS tc ON t.OWNER = tc.OWNER AND t.TABLE_NAME = tc.TABLE_NAME " +
+                    "LEFT JOIN ALL_COL_COMMENTS cc ON c.OWNER = cc.OWNER AND c.TABLE_NAME = cc.TABLE_NAME AND c.COLUMN_NAME = cc.COLUMN_NAME " +
+                    "WHERE t.OWNER = '" + dbName.toUpperCase() + "' " +
+                    "ORDER BY t.TABLE_NAME, c.COLUMN_ID";
+            } else {
+                // MySQL 查询
+                sql = String.format("""
+                    SELECT 
+                        t.TABLE_NAME,
+                        t.TABLE_COMMENT,
+                        t.TABLE_ROWS,
+                        c.COLUMN_NAME,
+                        c.COLUMN_COMMENT,
+                        c.COLUMN_TYPE,
+                        c.DATA_TYPE,
+                        c.IS_NULLABLE,
+                        c.COLUMN_DEFAULT,
+                        c.COLUMN_KEY,
+                        c.ORDINAL_POSITION
+                    FROM INFORMATION_SCHEMA.TABLES t
+                    LEFT JOIN INFORMATION_SCHEMA.COLUMNS c 
+                        ON t.TABLE_NAME = c.TABLE_NAME 
+                        AND t.TABLE_SCHEMA = c.TABLE_SCHEMA
+                    WHERE t.TABLE_SCHEMA = '%s'
+                    ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
+                    """, dbName);
+            }
             
             try (Statement stmt = sourceConn.createStatement();
                  ResultSet rs = stmt.executeQuery(sql)) {
@@ -402,10 +433,13 @@ public class SchemaService {
                 ? databaseService.getConnection(dbName)
                 : databaseService.getConnection(userId, dbName)) {
             
+            // 获取数据库类型
+            String dbType = databaseService.getDatabaseType(dbName);
+            
             // 分别获取不同的信息，避免ResultSet冲突
-            Map<String, String> tableComments = getTableComments(conn, dbName);
-            Map<String, List<String>> primaryKeys = getPrimaryKeysMap(conn, dbName);
-            Map<String, List<String>> columnInfo = getColumnInfo(conn, dbName);
+            Map<String, String> tableComments = getTableComments(conn, dbName, dbType);
+            Map<String, List<String>> primaryKeys = getPrimaryKeysMap(conn, dbName, dbType);
+            Map<String, List<String>> columnInfo = getColumnInfo(conn, dbName, dbType);
             
             // 构建表信息字符串
             for (String tableName : tableComments.keySet()) {
@@ -450,14 +484,25 @@ public class SchemaService {
      * 获取表注释信息
      */
     private Map<String, String> getTableComments(Connection conn, String dbName) throws Exception {
+        return getTableComments(conn, dbName, "mysql");
+    }
+    
+    private Map<String, String> getTableComments(Connection conn, String dbName, String dbType) throws Exception {
         Map<String, String> tableComments = new HashMap<>();
         
         try (Statement stmt = conn.createStatement()) {
-            String sql = String.format("""
-                SELECT TABLE_NAME, TABLE_COMMENT
-                FROM INFORMATION_SCHEMA.TABLES 
-                WHERE TABLE_SCHEMA = '%s'
-                """, dbName);
+            String sql;
+            if ("oracle".equals(dbType)) {
+                // Oracle 查询
+                sql = "SELECT TABLE_NAME, COMMENTS AS TABLE_COMMENT FROM ALL_TAB_COMMENTS WHERE OWNER = '" + dbName.toUpperCase() + "'";
+            } else {
+                // MySQL 查询
+                sql = String.format("""
+                    SELECT TABLE_NAME, TABLE_COMMENT
+                    FROM INFORMATION_SCHEMA.TABLES 
+                    WHERE TABLE_SCHEMA = '%s'
+                    """, dbName);
+            }
             
             ResultSet rs = stmt.executeQuery(sql);
             while (rs.next()) {
@@ -472,20 +517,37 @@ public class SchemaService {
      * 获取主键信息 - 重载方法支持传入Connection
      */
     private Map<String, List<String>> getPrimaryKeysMap(Connection conn, String dbName) throws Exception {
+        return getPrimaryKeysMap(conn, dbName, "mysql");
+    }
+    
+    private Map<String, List<String>> getPrimaryKeysMap(Connection conn, String dbName, String dbType) throws Exception {
         Map<String, List<String>> primaryKeys = new HashMap<>();
         
         try (Statement stmt = conn.createStatement()) {
-            String sql = String.format("""
-                SELECT tc.TABLE_NAME, kcu.COLUMN_NAME
-                FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-                JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu 
-                    ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME 
-                    AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
-                    AND tc.TABLE_NAME = kcu.TABLE_NAME
-                WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' 
-                    AND tc.TABLE_SCHEMA = '%s'
-                ORDER BY tc.TABLE_NAME, kcu.ORDINAL_POSITION
-                """, dbName);
+            String sql;
+            if ("oracle".equals(dbType)) {
+                // Oracle 查询
+                sql = "SELECT " +
+                      "    cons.TABLE_NAME, " +
+                      "    cols.COLUMN_NAME " +
+                      "FROM ALL_CONSTRAINTS cons " +
+                      "JOIN ALL_CONS_COLUMNS cols ON cons.OWNER = cols.OWNER AND cons.TABLE_NAME = cols.TABLE_NAME AND cons.CONSTRAINT_NAME = cols.CONSTRAINT_NAME " +
+                      "WHERE cons.OWNER = '" + dbName.toUpperCase() + "' AND cons.CONSTRAINT_TYPE = 'P' " +
+                      "ORDER BY cons.TABLE_NAME, cols.POSITION";
+            } else {
+                // MySQL 查询
+                sql = String.format("""
+                    SELECT tc.TABLE_NAME, kcu.COLUMN_NAME
+                    FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+                    JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu 
+                        ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME 
+                        AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+                        AND tc.TABLE_NAME = kcu.TABLE_NAME
+                    WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' 
+                        AND tc.TABLE_SCHEMA = '%s'
+                    ORDER BY tc.TABLE_NAME, kcu.ORDINAL_POSITION
+                    """, dbName);
+            }
             
             ResultSet rs = stmt.executeQuery(sql);
             while (rs.next()) {
@@ -502,19 +564,38 @@ public class SchemaService {
      * 获取列信息
      */
     private Map<String, List<String>> getColumnInfo(Connection conn, String dbName) throws Exception {
+        return getColumnInfo(conn, dbName, "mysql");
+    }
+    
+    private Map<String, List<String>> getColumnInfo(Connection conn, String dbName, String dbType) throws Exception {
         Map<String, List<String>> columnInfo = new HashMap<>();
         
         try (Statement stmt = conn.createStatement()) {
-            String sql = String.format("""
-                SELECT 
-                    TABLE_NAME,
-                    COLUMN_NAME,
-                    COLUMN_COMMENT,
-                    COLUMN_TYPE
-                FROM INFORMATION_SCHEMA.COLUMNS 
-                WHERE TABLE_SCHEMA = '%s'
-                ORDER BY TABLE_NAME, ORDINAL_POSITION
-                """, dbName);
+            String sql;
+            if ("oracle".equals(dbType)) {
+                // Oracle 查询
+                sql = "SELECT " +
+                      "    TABLE_NAME, " +
+                      "    COLUMN_NAME, " +
+                      "    COMMENTS AS COLUMN_COMMENT, " +
+                      "    DATA_TYPE AS COLUMN_TYPE " +
+                      "FROM ALL_COL_COMMENTS " +
+                      "JOIN ALL_TAB_COLUMNS ON ALL_COL_COMMENTS.OWNER = ALL_TAB_COLUMNS.OWNER AND ALL_COL_COMMENTS.TABLE_NAME = ALL_TAB_COLUMNS.TABLE_NAME AND ALL_COL_COMMENTS.COLUMN_NAME = ALL_TAB_COLUMNS.COLUMN_NAME " +
+                      "WHERE ALL_COL_COMMENTS.OWNER = '" + dbName.toUpperCase() + "' " +
+                      "ORDER BY ALL_COL_COMMENTS.TABLE_NAME, ALL_TAB_COLUMNS.COLUMN_ID";
+            } else {
+                // MySQL 查询
+                sql = String.format("""
+                    SELECT 
+                        TABLE_NAME,
+                        COLUMN_NAME,
+                        COLUMN_COMMENT,
+                        COLUMN_TYPE
+                    FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_SCHEMA = '%s'
+                    ORDER BY TABLE_NAME, ORDINAL_POSITION
+                    """, dbName);
+            }
             
             ResultSet rs = stmt.executeQuery(sql);
             while (rs.next()) {

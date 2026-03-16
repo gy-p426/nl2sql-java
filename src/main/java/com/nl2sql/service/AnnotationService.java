@@ -35,13 +35,26 @@ public class AnnotationService {
             
             List<Map<String, Object>> tables = new ArrayList<>();
             
-            // 获取所有表
-            String sql = String.format("""
-                SELECT TABLE_NAME, TABLE_COMMENT, TABLE_ROWS, CREATE_TIME, UPDATE_TIME
-                FROM INFORMATION_SCHEMA.TABLES
-                WHERE TABLE_SCHEMA = '%s'
-                ORDER BY TABLE_NAME
-                """, dbName);
+            // 获取数据库类型
+            String dbType = databaseService.getDatabaseType(dbName);
+            
+            // 根据数据库类型构建查询语句
+            String sql;
+            if ("oracle".equals(dbType)) {
+                // Oracle 查询
+                sql = "SELECT TABLE_NAME, COMMENTS AS TABLE_COMMENT, NUM_ROWS AS TABLE_ROWS, CREATED AS CREATE_TIME, LAST_DDL_TIME AS UPDATE_TIME " +
+                      "FROM ALL_TABLES " +
+                      "WHERE OWNER = '" + dbName.toUpperCase() + "' " +
+                      "ORDER BY TABLE_NAME";
+            } else {
+                // MySQL 查询
+                sql = String.format("""
+                    SELECT TABLE_NAME, TABLE_COMMENT, TABLE_ROWS, CREATE_TIME, UPDATE_TIME
+                    FROM INFORMATION_SCHEMA.TABLES
+                    WHERE TABLE_SCHEMA = '%s'
+                    ORDER BY TABLE_NAME
+                    """, dbName);
+            }
             
             ResultSet rs = stmt.executeQuery(sql);
             
@@ -88,13 +101,33 @@ public class AnnotationService {
                 : databaseService.getConnection(dbName);
              Statement stmt = conn.createStatement()) {
             
-            String sql = String.format("""
-                SELECT COLUMN_NAME, COLUMN_COMMENT, COLUMN_TYPE, DATA_TYPE,
-                       IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, EXTRA
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_SCHEMA = '%s' AND TABLE_NAME = '%s'
-                ORDER BY ORDINAL_POSITION
-                """, dbName, tableName);
+            // 获取数据库类型
+            String dbType = databaseService.getDatabaseType(dbName);
+            
+            // 根据数据库类型构建查询语句
+            String sql;
+            if ("oracle".equals(dbType)) {
+                // Oracle 查询
+                sql = "SELECT a.COLUMN_NAME, b.COMMENTS AS COLUMN_COMMENT, a.DATA_TYPE AS COLUMN_TYPE, a.DATA_TYPE, " +
+                      "a.NULLABLE AS IS_NULLABLE, a.DATA_DEFAULT AS COLUMN_DEFAULT, " +
+                      "CASE WHEN a.COLUMN_NAME IN (SELECT COLUMN_NAME FROM ALL_CONSTRAINTS c, ALL_CONS_COLUMNS cc " +
+                      "WHERE c.OWNER = '" + dbName.toUpperCase() + "' AND c.TABLE_NAME = '" + tableName.toUpperCase() + "' " +
+                      "AND c.CONSTRAINT_TYPE = 'P' AND c.OWNER = cc.OWNER AND c.TABLE_NAME = cc.TABLE_NAME " +
+                      "AND c.CONSTRAINT_NAME = cc.CONSTRAINT_NAME) THEN 'PRI' ELSE '' END AS COLUMN_KEY " +
+                      "FROM ALL_TAB_COLUMNS a " +
+                      "LEFT JOIN ALL_COL_COMMENTS b ON a.OWNER = b.OWNER AND a.TABLE_NAME = b.TABLE_NAME AND a.COLUMN_NAME = b.COLUMN_NAME " +
+                      "WHERE a.OWNER = '" + dbName.toUpperCase() + "' AND a.TABLE_NAME = '" + tableName.toUpperCase() + "' " +
+                      "ORDER BY a.COLUMN_ID";
+            } else {
+                // MySQL 查询
+                sql = String.format("""
+                    SELECT COLUMN_NAME, COLUMN_COMMENT, COLUMN_TYPE, DATA_TYPE,
+                           IS_NULLABLE, COLUMN_DEFAULT, COLUMN_KEY, EXTRA
+                    FROM INFORMATION_SCHEMA.COLUMNS
+                    WHERE TABLE_SCHEMA = '%s' AND TABLE_NAME = '%s'
+                    ORDER BY ORDINAL_POSITION
+                    """, dbName, tableName);
+            }
             
             ResultSet rs = stmt.executeQuery(sql);
             
@@ -106,7 +139,7 @@ public class AnnotationService {
                 columnInfo.put("custom_comment", getCustomAnnotation(dbName, tableName, columnName, userId));
                 columnInfo.put("column_type", rs.getString("COLUMN_TYPE"));
                 columnInfo.put("data_type", rs.getString("DATA_TYPE"));
-                columnInfo.put("is_nullable", "YES".equals(rs.getString("IS_NULLABLE")));
+                columnInfo.put("is_nullable", "YES".equals(rs.getString("IS_NULLABLE")) || "Y".equals(rs.getString("IS_NULLABLE")));
                 columnInfo.put("column_default", rs.getString("COLUMN_DEFAULT"));
                 columnInfo.put("column_key", rs.getString("COLUMN_KEY"));
                 

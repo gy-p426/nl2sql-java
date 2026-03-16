@@ -75,12 +75,18 @@ public class ConfigService {
     @Transactional
     public Map<String, Object> addOrUpdateDatabaseHost(String name, String host, String user, 
                                                         String password, List<String> databases) {
-        return addOrUpdateDatabaseHost(null, name, host, user, password, databases);
+        return addOrUpdateDatabaseHost(null, name, host, user, password, databases, "mysql");
+    }
+    
+    @Transactional
+    public Map<String, Object> addOrUpdateDatabaseHost(String name, String host, String user, 
+                                                        String password, List<String> databases, String dbType) {
+        return addOrUpdateDatabaseHost(null, name, host, user, password, databases, dbType);
     }
 
     @Transactional
     public Map<String, Object> addOrUpdateDatabaseHost(Integer userId, String name, String host, String user,
-                                                        String password, List<String> databases) {
+                                                        String password, List<String> databases, String dbType) {
         log.info("💾 添加/更新数据库主机配置: {}", name);
         try {
             DatabaseHostConfig config = userId != null
@@ -104,10 +110,26 @@ public class ConfigService {
             if (userId != null) {
                 config.setOwnerUserId(userId);
             }
-            config.setHost(host);
+            
+            // 解析主机和端口
+            if (host != null && host.contains(":")) {
+                String[] parts = host.split(":");
+                config.setHost(parts[0]);
+                try {
+                    config.setPort(Integer.parseInt(parts[1]));
+                } catch (NumberFormatException e) {
+                    // 端口解析失败，使用默认值
+                    config.setPort("oracle".equals(dbType) ? 1521 : 3306);
+                }
+            } else {
+                config.setHost(host);
+                config.setPort("oracle".equals(dbType) ? 1521 : 3306);
+            }
+            
             config.setUsername(user);
             config.setPassword(password); // TODO: 加密存储
             config.setDatabases(objectMapper.writeValueAsString(databases));
+            config.setDbType(dbType != null ? dbType : "mysql");
             config.setIsActive(true);
             
             databaseHostConfigRepository.save(config);
@@ -357,7 +379,15 @@ public class ConfigService {
      * 测试新连接
      */
     public Map<String, Object> testNewConnection(String host, String user, String password) {
-        log.info("🔌 测试新连接: {}", host);
+        return testNewConnection(host, user, password, "mysql");
+    }
+    
+    public Map<String, Object> testNewConnection(String host, String user, String password, String dbType) {
+        return testNewConnection(host, user, password, dbType, "ORCL");
+    }
+    
+    public Map<String, Object> testNewConnection(String host, String user, String password, String dbType, String sid) {
+        log.info("🔌 测试新连接: {} ({} - {} - SID: {})", host, dbType, user, sid);
         try {
             // 处理 localhost 解析问题
             if (host != null && (host.equals("localhost") || host.startsWith("localhost:"))) {
@@ -369,27 +399,48 @@ public class ConfigService {
                 log.info("🔄 将 localhost 转换为 127.0.0.1 以避免 DNS 解析问题: {}", host);
             }
             
-            // 构建连接 URL - 如果 host 已经包含端口号，就不再添加
+            // 构建连接 URL - 根据数据库类型
             String url;
-            if (host.contains(":")) {
-                url = "jdbc:mysql://" + host + "?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true";
+            if ("oracle".equals(dbType)) {
+                // Oracle 连接 URL
+                if (host.contains(":")) {
+                    url = "jdbc:oracle:thin:@" + host + ":" + sid;
+                } else {
+                    url = "jdbc:oracle:thin:@" + host + ":1521:" + sid;
+                }
             } else {
-                url = "jdbc:mysql://" + host + ":3306?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true";
+                // MySQL 连接 URL
+                if (host.contains(":")) {
+                    url = "jdbc:mysql://" + host + "?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true";
+                } else {
+                    url = "jdbc:mysql://" + host + ":3306?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true";
+                }
             }
             
             List<String> databases = new ArrayList<>();
             
             try (Connection conn = DriverManager.getConnection(url, user, password);
-                 Statement stmt = conn.createStatement();
-                 ResultSet rs = stmt.executeQuery("SHOW DATABASES")) {
+                 Statement stmt = conn.createStatement()) {
                 
-                while (rs.next()) {
-                    String dbName = rs.getString(1);
-                    if (!dbName.equals("information_schema") && 
-                        !dbName.equals("mysql") && 
-                        !dbName.equals("performance_schema") && 
-                        !dbName.equals("sys")) {
+                ResultSet rs;
+                if ("oracle".equals(dbType)) {
+                    // Oracle 查询所有用户，排除部分系统用户（保留SYSTEM）
+                    rs = stmt.executeQuery("SELECT USERNAME FROM ALL_USERS WHERE USERNAME NOT IN ('SYS', 'SYSMAN', 'DBSNMP', 'OUTLN', 'VECSYS', 'DBSFWUSER', 'AUDSYS', 'APPQOSSYS', 'GSMADMIN_INTERNAL', 'XDB', 'WMSYS', 'OJVMSYS', 'CTXSYS', 'OLAPSYS', 'MDSYS', 'LBACSYS', 'DVSYS')");
+                    while (rs.next()) {
+                        String dbName = rs.getString("USERNAME");
                         databases.add(dbName);
+                    }
+                } else {
+                    // MySQL 查询数据库
+                    rs = stmt.executeQuery("SHOW DATABASES");
+                    while (rs.next()) {
+                        String dbName = rs.getString(1);
+                        if (!dbName.equals("information_schema") && 
+                            !dbName.equals("mysql") && 
+                            !dbName.equals("performance_schema") && 
+                            !dbName.equals("sys")) {
+                            databases.add(dbName);
+                        }
                     }
                 }
             }
@@ -405,11 +456,11 @@ public class ConfigService {
             // 提供更详细的错误信息
             String errorMessage = e.getMessage();
             if (e.getMessage().contains("UnknownHostException")) {
-                errorMessage = "无法解析主机名，请检查 MySQL 服务是否运行或尝试使用 IP 地址";
-            } else if (e.getMessage().contains("Access denied")) {
+                errorMessage = "无法解析主机名，请检查数据库服务是否运行或尝试使用 IP 地址";
+            } else if (e.getMessage().contains("Access denied") || e.getMessage().contains("invalid username/password")) {
                 errorMessage = "用户名或密码错误";
             } else if (e.getMessage().contains("Connection refused")) {
-                errorMessage = "连接被拒绝，请检查 MySQL 服务是否运行在指定端口";
+                errorMessage = "连接被拒绝，请检查数据库服务是否运行在指定端口";
             }
             
             return Map.of("success", false, "error", errorMessage);
@@ -428,8 +479,21 @@ public class ConfigService {
         try {
             DatabaseHostConfig config = getOwnedHostConfig(userId, name);
             
-            String url = String.format("jdbc:mysql://%s:%d/%s?useSSL=false&serverTimezone=UTC",
-                config.getHost(), config.getPort(), database != null ? database : "");
+            // 根据数据库类型构建连接 URL
+            String url;
+            String dbType = config.getDbType() != null ? config.getDbType() : "mysql";
+            
+            if ("oracle".equals(dbType)) {
+                // Oracle 连接 URL
+                // 注意：对于 Oracle，database 参数实际上是 SID
+                String sid = database != null ? database : "ORCL";
+                url = String.format("jdbc:oracle:thin:@%s:%d:%s",
+                    config.getHost(), config.getPort(), sid);
+            } else {
+                // MySQL 连接 URL
+                url = String.format("jdbc:mysql://%s:%d/%s?useSSL=false&serverTimezone=UTC",
+                    config.getHost(), config.getPort(), database != null ? database : "");
+            }
             
             try (Connection conn = DriverManager.getConnection(url, config.getUsername(), config.getPassword())) {
                 boolean valid = conn.isValid(5);
@@ -708,6 +772,9 @@ public class ConfigService {
             pool.put("minimum_idle", host.getPoolMinIdle());
             pool.put("connection_timeout", host.getPoolTimeout());
             map.put("pool", pool);
+            
+            // 添加数据库类型
+            map.put("dbType", host.getDbType() != null ? host.getDbType() : "mysql");
             
             return map;
         } catch (Exception e) {
