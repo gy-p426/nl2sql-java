@@ -42,11 +42,11 @@ public class AnnotationService {
             String sql;
             if ("oracle".equals(dbType)) {
                 // Oracle 查询 - 使用ALL_TAB_COMMENTS获取表注释
-                // 对于Oracle，使用连接用户作为OWNER，而不是dbName
+                // 对于Oracle，使用dbName作为OWNER，这样可以查询指定用户的表
                 sql = "SELECT a.TABLE_NAME, b.COMMENTS AS TABLE_COMMENT, a.NUM_ROWS AS TABLE_ROWS " +
                       "FROM ALL_TABLES a " +
                       "LEFT JOIN ALL_TAB_COMMENTS b ON a.OWNER = b.OWNER AND a.TABLE_NAME = b.TABLE_NAME " +
-                      "WHERE a.OWNER = USER " +
+                      "WHERE a.OWNER = '" + dbName.toUpperCase() + "' " +
                       "ORDER BY a.TABLE_NAME";
             } else {
                 // MySQL 查询
@@ -66,7 +66,29 @@ public class AnnotationService {
                 tableInfo.put("table_name", tableName);
                 tableInfo.put("db_comment", rs.getString("TABLE_COMMENT"));
                 tableInfo.put("custom_comment", getCustomAnnotation(dbName, tableName, null, userId));
-                tableInfo.put("table_rows", rs.getInt("TABLE_ROWS"));
+                
+                // 获取表行数
+                int tableRows = rs.getInt("TABLE_ROWS");
+                
+                // 对于Oracle，如果NUM_ROWS为0，使用COUNT(*)实时计算
+                if ("oracle".equals(dbType) && tableRows == 0) {
+                    try {
+                        // 使用新的Statement来执行COUNT查询，避免关闭之前的ResultSet
+                        try (Statement countStmt = conn.createStatement()) {
+                            String countSql = "SELECT COUNT(*) FROM " + tableName;
+                            try (ResultSet countRs = countStmt.executeQuery(countSql)) {
+                                if (countRs.next()) {
+                                    tableRows = countRs.getInt(1);
+                                }
+                            }
+                        }
+                    } catch (Exception e) {
+                        log.warn("⚠️ 计算表 {} 行数时出错: {}", tableName, e.getMessage());
+                        // 如果计算失败，保持NUM_ROWS的值
+                    }
+                }
+                
+                tableInfo.put("table_rows", tableRows);
                 
                 // 尝试获取CREATE_TIME和UPDATE_TIME，Oracle可能没有这些字段
                 try {
@@ -128,12 +150,12 @@ public class AnnotationService {
                 sql = "SELECT a.COLUMN_NAME, b.COMMENTS AS COLUMN_COMMENT, a.DATA_TYPE AS COLUMN_TYPE, a.DATA_TYPE, " +
                       "a.NULLABLE AS IS_NULLABLE, a.DATA_DEFAULT AS COLUMN_DEFAULT, " +
                       "CASE WHEN a.COLUMN_NAME IN (SELECT COLUMN_NAME FROM ALL_CONSTRAINTS c, ALL_CONS_COLUMNS cc " +
-                      "WHERE c.OWNER = USER AND c.TABLE_NAME = '" + tableName.toUpperCase() + "' " +
+                      "WHERE c.OWNER = '" + dbName.toUpperCase() + "' AND c.TABLE_NAME = '" + tableName.toUpperCase() + "' " +
                       "AND c.CONSTRAINT_TYPE = 'P' AND c.OWNER = cc.OWNER AND c.TABLE_NAME = cc.TABLE_NAME " +
                       "AND c.CONSTRAINT_NAME = cc.CONSTRAINT_NAME) THEN 'PRI' ELSE '' END AS COLUMN_KEY " +
                       "FROM ALL_TAB_COLUMNS a " +
                       "LEFT JOIN ALL_COL_COMMENTS b ON a.OWNER = b.OWNER AND a.TABLE_NAME = b.TABLE_NAME AND a.COLUMN_NAME = b.COLUMN_NAME " +
-                      "WHERE a.OWNER = USER AND a.TABLE_NAME = '" + tableName.toUpperCase() + "' " +
+                      "WHERE a.OWNER = '" + dbName.toUpperCase() + "' AND a.TABLE_NAME = '" + tableName.toUpperCase() + "' " +
                       "ORDER BY a.COLUMN_ID";
             } else {
                 // MySQL 查询

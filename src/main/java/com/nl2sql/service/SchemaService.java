@@ -147,7 +147,7 @@ public class SchemaService {
             // 获取表和列信息
             String sql;
             if ("oracle".equals(dbType)) {
-                // Oracle 查询
+                // Oracle 查询 - 使用当前用户
                 sql = "SELECT " +
                     "    t.TABLE_NAME, " +
                     "    tc.COMMENTS AS TABLE_COMMENT, " +
@@ -436,6 +436,15 @@ public class SchemaService {
             // 获取数据库类型
             String dbType = databaseService.getDatabaseType(dbName);
             
+            // 如果无法从配置中获取数据库类型，尝试从连接元数据中获取
+            if (dbType == null || "mysql".equals(dbType)) {
+                String productName = conn.getMetaData().getDatabaseProductName().toLowerCase();
+                if (productName.contains("oracle")) {
+                    dbType = "oracle";
+                    log.info("🔍 从连接元数据检测到数据库类型: oracle");
+                }
+            }
+            
             // 分别获取不同的信息，避免ResultSet冲突
             Map<String, String> tableComments = getTableComments(conn, dbName, dbType);
             Map<String, List<String>> primaryKeys = getPrimaryKeysMap(conn, dbName, dbType);
@@ -475,6 +484,7 @@ public class SchemaService {
             
         } catch (Exception e) {
             System.err.println("❌ 构建表信息字符串时出错: " + e.getMessage());
+            log.error("❌ 构建表信息字符串时出错: {}", e.getMessage(), e);
         }
         
         return tableLines;
@@ -493,7 +503,7 @@ public class SchemaService {
         try (Statement stmt = conn.createStatement()) {
             String sql;
             if ("oracle".equals(dbType)) {
-                // Oracle 查询
+                // Oracle 查询 - 使用当前用户
                 sql = "SELECT TABLE_NAME, COMMENTS AS TABLE_COMMENT FROM ALL_TAB_COMMENTS WHERE OWNER = USER";
             } else {
                 // MySQL 查询
@@ -504,11 +514,15 @@ public class SchemaService {
                     """, dbName);
             }
             
+            log.info("🔍 执行表注释查询: {}", sql);
+            
             ResultSet rs = stmt.executeQuery(sql);
             while (rs.next()) {
                 tableComments.put(rs.getString("TABLE_NAME"), rs.getString("TABLE_COMMENT"));
             }
         }
+        
+        log.info("✅ 获取到 {} 个表的注释信息", tableComments.size());
         
         return tableComments;
     }
@@ -526,7 +540,7 @@ public class SchemaService {
         try (Statement stmt = conn.createStatement()) {
             String sql;
             if ("oracle".equals(dbType)) {
-                // Oracle 查询
+                // Oracle 查询 - 使用当前用户
                 sql = "SELECT " +
                       "    cons.TABLE_NAME, " +
                       "    cols.COLUMN_NAME " +
@@ -549,6 +563,8 @@ public class SchemaService {
                     """, dbName);
             }
             
+            log.info("🔍 执行主键查询: {}", sql);
+            
             ResultSet rs = stmt.executeQuery(sql);
             while (rs.next()) {
                 String tableName = rs.getString("TABLE_NAME");
@@ -556,6 +572,8 @@ public class SchemaService {
                 primaryKeys.computeIfAbsent(tableName, k -> new ArrayList<>()).add(columnName);
             }
         }
+        
+        log.info("✅ 获取到 {} 个表的主键信息", primaryKeys.size());
         
         return primaryKeys;
     }
@@ -573,16 +591,16 @@ public class SchemaService {
         try (Statement stmt = conn.createStatement()) {
             String sql;
             if ("oracle".equals(dbType)) {
-                // Oracle 查询
+                // Oracle 查询 - 使用当前用户和表别名
                 sql = "SELECT " +
-                      "    TABLE_NAME, " +
-                      "    COLUMN_NAME, " +
-                      "    COMMENTS AS COLUMN_COMMENT, " +
-                      "    DATA_TYPE AS COLUMN_TYPE " +
-                      "FROM ALL_COL_COMMENTS " +
-                      "JOIN ALL_TAB_COLUMNS ON ALL_COL_COMMENTS.OWNER = ALL_TAB_COLUMNS.OWNER AND ALL_COL_COMMENTS.TABLE_NAME = ALL_TAB_COLUMNS.TABLE_NAME AND ALL_COL_COMMENTS.COLUMN_NAME = ALL_TAB_COLUMNS.COLUMN_NAME " +
-                      "WHERE ALL_COL_COMMENTS.OWNER = USER " +
-                      "ORDER BY ALL_COL_COMMENTS.TABLE_NAME, ALL_TAB_COLUMNS.COLUMN_ID";
+                      "    acc.TABLE_NAME, " +
+                      "    acc.COLUMN_NAME, " +
+                      "    acc.COMMENTS AS COLUMN_COMMENT, " +
+                      "    atc.DATA_TYPE AS COLUMN_TYPE " +
+                      "FROM ALL_COL_COMMENTS acc " +
+                      "JOIN ALL_TAB_COLUMNS atc ON acc.OWNER = atc.OWNER AND acc.TABLE_NAME = atc.TABLE_NAME AND acc.COLUMN_NAME = atc.COLUMN_NAME " +
+                      "WHERE acc.OWNER = USER " +
+                      "ORDER BY acc.TABLE_NAME, atc.COLUMN_ID";
             } else {
                 // MySQL 查询
                 sql = String.format("""
@@ -596,6 +614,8 @@ public class SchemaService {
                     ORDER BY TABLE_NAME, ORDINAL_POSITION
                     """, dbName);
             }
+            
+            log.info("🔍 执行列信息查询: {}", sql);
             
             ResultSet rs = stmt.executeQuery(sql);
             while (rs.next()) {
@@ -620,6 +640,8 @@ public class SchemaService {
                 }
             }
         }
+        
+        log.info("✅ 获取到 {} 个表的列信息", columnInfo.size());
         
         return columnInfo;
     }

@@ -651,6 +651,7 @@ public class SQLGeneratorService {
             10. ⚠️ 根据数据库类型使用正确的SQL语法：
                 - MySQL: 使用 LIMIT 子句限制结果数量
                 - Oracle: 使用 ROWNUM 限制结果数量，如 "SELECT * FROM (SELECT * FROM table) WHERE ROWNUM <= 10"
+            11. ⚠️ 对于Oracle数据库，CASE语句的所有分支必须返回相同的数据类型。如果WHEN分支返回字符串，ELSE分支也必须返回字符串，可以使用TO_CHAR函数转换数值类型为字符串。
             
             请基于以上信息生成SQL：
             """,
