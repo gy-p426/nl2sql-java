@@ -141,12 +141,14 @@ public class ConfigController {
             @SuppressWarnings("unchecked")
             java.util.List<String> databases = (java.util.List<String>) request.get("databases");
             String dbType = (String) request.getOrDefault("dbType", "mysql");
+            String sid = (String) request.getOrDefault("sid", "ORCL");
+            String pdbName = (String) request.get("pdbName");
             
             if (userId == null || section == null || host == null || user == null || password == null) {
                 return ApiResponse.error("缺少必要参数");
             }
             
-            Map<String, Object> result = configService.addOrUpdateDatabaseHost(userId, section, host, user, password, databases, dbType);
+            Map<String, Object> result = configService.addOrUpdateDatabaseHost(userId, section, host, user, password, databases, dbType, sid, pdbName);
             return ApiResponse.success("保存成功", result);
         } catch (Exception e) {
             log.error("❌ 添加/更新数据库主机配置错误: {}", e.getMessage());
@@ -239,12 +241,13 @@ public class ConfigController {
             String password = request.get("password");
             String dbType = request.getOrDefault("dbType", "mysql");
             String sid = request.getOrDefault("sid", "ORCL");
+            String pdbName = request.get("pdbName");
             
             if (host == null || user == null || password == null) {
                 return ApiResponse.error("缺少必要参数");
             }
             
-            Map<String, Object> result = configService.testNewConnection(host, user, password, dbType, sid);
+            Map<String, Object> result = configService.testNewConnection(host, user, password, dbType, sid, pdbName);
             
             if ((Boolean) result.getOrDefault("success", false)) {
                 return ApiResponse.success("连接成功", result);

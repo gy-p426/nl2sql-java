@@ -126,8 +126,15 @@ public class DatabasePoolService {
 
             switch (dbType.toLowerCase()) {
                 case "oracle":
-                    // 对于Oracle，dbName实际上是SID
-                    jdbcUrl = String.format("jdbc:oracle:thin:@%s:%d:%s", host, port, dbName);
+                    // 对于Oracle，根据是否有PDB名称构建不同的连接URL
+                    if (hostConfig.getPdbName() != null && !hostConfig.getPdbName().isEmpty()) {
+                        // 使用PDB服务名连接方式
+                        jdbcUrl = String.format("jdbc:oracle:thin:@//%s:%d/%s", host, port, hostConfig.getPdbName());
+                    } else {
+                        // 使用传统SID连接方式
+                        String oracleSid = hostConfig.getSid() != null ? hostConfig.getSid() : "ORCL";
+                        jdbcUrl = String.format("jdbc:oracle:thin:@%s:%d:%s", host, port, oracleSid);
+                    }
                     driverClassName = "oracle.jdbc.OracleDriver";
                     break;
                 case "mysql":

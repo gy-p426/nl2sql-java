@@ -75,18 +75,18 @@ public class ConfigService {
     @Transactional
     public Map<String, Object> addOrUpdateDatabaseHost(String name, String host, String user, 
                                                         String password, List<String> databases) {
-        return addOrUpdateDatabaseHost(null, name, host, user, password, databases, "mysql");
+        return addOrUpdateDatabaseHost(null, name, host, user, password, databases, "mysql", "ORCL", null);
     }
     
     @Transactional
     public Map<String, Object> addOrUpdateDatabaseHost(String name, String host, String user, 
                                                         String password, List<String> databases, String dbType) {
-        return addOrUpdateDatabaseHost(null, name, host, user, password, databases, dbType);
+        return addOrUpdateDatabaseHost(null, name, host, user, password, databases, dbType, "ORCL", null);
     }
 
     @Transactional
     public Map<String, Object> addOrUpdateDatabaseHost(Integer userId, String name, String host, String user,
-                                                        String password, List<String> databases, String dbType) {
+                                                        String password, List<String> databases, String dbType, String sid, String pdbName) {
         log.info("💾 添加/更新数据库主机配置: {}", name);
         try {
             DatabaseHostConfig config = userId != null
@@ -130,6 +130,8 @@ public class ConfigService {
             config.setPassword(password); // TODO: 加密存储
             config.setDatabases(objectMapper.writeValueAsString(databases));
             config.setDbType(dbType != null ? dbType : "mysql");
+            config.setSid(sid != null ? sid : "ORCL");
+            config.setPdbName(pdbName);
             config.setIsActive(true);
             
             databaseHostConfigRepository.save(config);
@@ -383,11 +385,15 @@ public class ConfigService {
     }
     
     public Map<String, Object> testNewConnection(String host, String user, String password, String dbType) {
-        return testNewConnection(host, user, password, dbType, "ORCL");
+        return testNewConnection(host, user, password, dbType, "ORCL", null);
     }
     
     public Map<String, Object> testNewConnection(String host, String user, String password, String dbType, String sid) {
-        log.info("🔌 测试新连接: {} ({} - {} - SID: {})", host, dbType, user, sid);
+        return testNewConnection(host, user, password, dbType, sid, null);
+    }
+    
+    public Map<String, Object> testNewConnection(String host, String user, String password, String dbType, String sid, String pdbName) {
+        log.info("🔌 测试新连接: {} ({} - {} - SID: {} - PDB: {})", host, dbType, user, sid, pdbName);
         try {
             // 处理 localhost 解析问题
             if (host != null && (host.equals("localhost") || host.startsWith("localhost:"))) {
@@ -403,10 +409,20 @@ public class ConfigService {
             String url;
             if ("oracle".equals(dbType)) {
                 // Oracle 连接 URL
-                if (host.contains(":")) {
-                    url = "jdbc:oracle:thin:@" + host + ":" + sid;
+                if (pdbName != null && !pdbName.isEmpty()) {
+                    // 使用PDB服务名连接方式
+                    if (host.contains(":")) {
+                        url = "jdbc:oracle:thin:@//" + host + "/" + pdbName;
+                    } else {
+                        url = "jdbc:oracle:thin:@//" + host + ":1521/" + pdbName;
+                    }
                 } else {
-                    url = "jdbc:oracle:thin:@" + host + ":1521:" + sid;
+                    // 使用传统SID连接方式
+                    if (host.contains(":")) {
+                        url = "jdbc:oracle:thin:@" + host + ":" + sid;
+                    } else {
+                        url = "jdbc:oracle:thin:@" + host + ":1521:" + sid;
+                    }
                 }
             } else {
                 // MySQL 连接 URL
@@ -485,10 +501,16 @@ public class ConfigService {
             
             if ("oracle".equals(dbType)) {
                 // Oracle 连接 URL
-                // 注意：对于 Oracle，database 参数实际上是 SID
-                String sid = database != null ? database : "ORCL";
-                url = String.format("jdbc:oracle:thin:@%s:%d:%s",
-                    config.getHost(), config.getPort(), sid);
+                if (config.getPdbName() != null && !config.getPdbName().isEmpty()) {
+                    // 使用PDB服务名连接方式
+                    url = String.format("jdbc:oracle:thin:@//%s:%d/%s",
+                        config.getHost(), config.getPort(), config.getPdbName());
+                } else {
+                    // 注意：对于 Oracle，database 参数实际上是 SID
+                    String sid = database != null ? database : "ORCL";
+                    url = String.format("jdbc:oracle:thin:@%s:%d:%s",
+                        config.getHost(), config.getPort(), sid);
+                }
             } else {
                 // MySQL 连接 URL
                 url = String.format("jdbc:mysql://%s:%d/%s?useSSL=false&serverTimezone=UTC",
@@ -773,8 +795,10 @@ public class ConfigService {
             pool.put("connection_timeout", host.getPoolTimeout());
             map.put("pool", pool);
             
-            // 添加数据库类型
+            // 添加数据库类型、SID和PDB名称
             map.put("dbType", host.getDbType() != null ? host.getDbType() : "mysql");
+            map.put("sid", host.getSid() != null ? host.getSid() : "ORCL");
+            map.put("pdbName", host.getPdbName());
             
             return map;
         } catch (Exception e) {

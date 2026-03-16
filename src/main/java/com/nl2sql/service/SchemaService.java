@@ -159,7 +159,7 @@ public class SchemaService {
                     "    c.NULLABLE AS IS_NULLABLE, " +
                     "    c.DATA_DEFAULT AS COLUMN_DEFAULT, " +
                     "    CASE WHEN c.COLUMN_NAME IN (SELECT COLUMN_NAME FROM ALL_CONSTRAINTS cons, ALL_CONS_COLUMNS cols " +
-                    "         WHERE cons.OWNER = '" + dbName.toUpperCase() + "' AND cons.TABLE_NAME = t.TABLE_NAME " +
+                    "         WHERE cons.OWNER = USER AND cons.TABLE_NAME = t.TABLE_NAME " +
                     "         AND cons.CONSTRAINT_TYPE = 'P' AND cons.OWNER = cols.OWNER " +
                     "         AND cons.TABLE_NAME = cols.TABLE_NAME AND cons.CONSTRAINT_NAME = cols.CONSTRAINT_NAME) " +
                     "    THEN 'PRI' ELSE '' END AS COLUMN_KEY, " +
@@ -168,7 +168,7 @@ public class SchemaService {
                     "LEFT JOIN ALL_TAB_COLUMNS c ON t.OWNER = c.OWNER AND t.TABLE_NAME = c.TABLE_NAME " +
                     "LEFT JOIN ALL_TAB_COMMENTS tc ON t.OWNER = tc.OWNER AND t.TABLE_NAME = tc.TABLE_NAME " +
                     "LEFT JOIN ALL_COL_COMMENTS cc ON c.OWNER = cc.OWNER AND c.TABLE_NAME = cc.TABLE_NAME AND c.COLUMN_NAME = cc.COLUMN_NAME " +
-                    "WHERE t.OWNER = '" + dbName.toUpperCase() + "' " +
+                    "WHERE t.OWNER = USER " +
                     "ORDER BY t.TABLE_NAME, c.COLUMN_ID";
             } else {
                 // MySQL 查询
@@ -494,7 +494,7 @@ public class SchemaService {
             String sql;
             if ("oracle".equals(dbType)) {
                 // Oracle 查询
-                sql = "SELECT TABLE_NAME, COMMENTS AS TABLE_COMMENT FROM ALL_TAB_COMMENTS WHERE OWNER = '" + dbName.toUpperCase() + "'";
+                sql = "SELECT TABLE_NAME, COMMENTS AS TABLE_COMMENT FROM ALL_TAB_COMMENTS WHERE OWNER = USER";
             } else {
                 // MySQL 查询
                 sql = String.format("""
@@ -532,7 +532,7 @@ public class SchemaService {
                       "    cols.COLUMN_NAME " +
                       "FROM ALL_CONSTRAINTS cons " +
                       "JOIN ALL_CONS_COLUMNS cols ON cons.OWNER = cols.OWNER AND cons.TABLE_NAME = cols.TABLE_NAME AND cons.CONSTRAINT_NAME = cols.CONSTRAINT_NAME " +
-                      "WHERE cons.OWNER = '" + dbName.toUpperCase() + "' AND cons.CONSTRAINT_TYPE = 'P' " +
+                      "WHERE cons.OWNER = USER AND cons.CONSTRAINT_TYPE = 'P' " +
                       "ORDER BY cons.TABLE_NAME, cols.POSITION";
             } else {
                 // MySQL 查询
@@ -581,7 +581,7 @@ public class SchemaService {
                       "    DATA_TYPE AS COLUMN_TYPE " +
                       "FROM ALL_COL_COMMENTS " +
                       "JOIN ALL_TAB_COLUMNS ON ALL_COL_COMMENTS.OWNER = ALL_TAB_COLUMNS.OWNER AND ALL_COL_COMMENTS.TABLE_NAME = ALL_TAB_COLUMNS.TABLE_NAME AND ALL_COL_COMMENTS.COLUMN_NAME = ALL_TAB_COLUMNS.COLUMN_NAME " +
-                      "WHERE ALL_COL_COMMENTS.OWNER = '" + dbName.toUpperCase() + "' " +
+                      "WHERE ALL_COL_COMMENTS.OWNER = USER " +
                       "ORDER BY ALL_COL_COMMENTS.TABLE_NAME, ALL_TAB_COLUMNS.COLUMN_ID";
             } else {
                 // MySQL 查询

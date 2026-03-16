@@ -64,6 +64,12 @@ public class DatabaseHostConfig {
     @Column(name = "db_type", length = 20)
     private String dbType = "mysql"; // mysql, oracle
 
+    @Column(name = "sid", length = 50)
+    private String sid = "ORCL"; // Oracle SID
+
+    @Column(name = "pdb_name", length = 50)
+    private String pdbName; // Oracle PDB名称
+
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
 

@@ -41,11 +41,13 @@ public class AnnotationService {
             // 根据数据库类型构建查询语句
             String sql;
             if ("oracle".equals(dbType)) {
-                // Oracle 查询
-                sql = "SELECT TABLE_NAME, COMMENTS AS TABLE_COMMENT, NUM_ROWS AS TABLE_ROWS, CREATED AS CREATE_TIME, LAST_DDL_TIME AS UPDATE_TIME " +
-                      "FROM ALL_TABLES " +
-                      "WHERE OWNER = '" + dbName.toUpperCase() + "' " +
-                      "ORDER BY TABLE_NAME";
+                // Oracle 查询 - 使用ALL_TAB_COMMENTS获取表注释
+                // 对于Oracle，使用连接用户作为OWNER，而不是dbName
+                sql = "SELECT a.TABLE_NAME, b.COMMENTS AS TABLE_COMMENT, a.NUM_ROWS AS TABLE_ROWS " +
+                      "FROM ALL_TABLES a " +
+                      "LEFT JOIN ALL_TAB_COMMENTS b ON a.OWNER = b.OWNER AND a.TABLE_NAME = b.TABLE_NAME " +
+                      "WHERE a.OWNER = USER " +
+                      "ORDER BY a.TABLE_NAME";
             } else {
                 // MySQL 查询
                 sql = String.format("""
@@ -65,6 +67,21 @@ public class AnnotationService {
                 tableInfo.put("db_comment", rs.getString("TABLE_COMMENT"));
                 tableInfo.put("custom_comment", getCustomAnnotation(dbName, tableName, null, userId));
                 tableInfo.put("table_rows", rs.getInt("TABLE_ROWS"));
+                
+                // 尝试获取CREATE_TIME和UPDATE_TIME，Oracle可能没有这些字段
+                try {
+                    tableInfo.put("create_time", rs.getTimestamp("CREATE_TIME"));
+                } catch (Exception e) {
+                    // Oracle没有CREATE_TIME字段，设置为null
+                    tableInfo.put("create_time", null);
+                }
+                
+                try {
+                    tableInfo.put("update_time", rs.getTimestamp("UPDATE_TIME"));
+                } catch (Exception e) {
+                    // Oracle没有UPDATE_TIME字段，设置为null
+                    tableInfo.put("update_time", null);
+                }
                 
                 // 获取列信息
                 tableInfo.put("columns", getTableColumns(dbName, tableName, userId));
@@ -111,12 +128,12 @@ public class AnnotationService {
                 sql = "SELECT a.COLUMN_NAME, b.COMMENTS AS COLUMN_COMMENT, a.DATA_TYPE AS COLUMN_TYPE, a.DATA_TYPE, " +
                       "a.NULLABLE AS IS_NULLABLE, a.DATA_DEFAULT AS COLUMN_DEFAULT, " +
                       "CASE WHEN a.COLUMN_NAME IN (SELECT COLUMN_NAME FROM ALL_CONSTRAINTS c, ALL_CONS_COLUMNS cc " +
-                      "WHERE c.OWNER = '" + dbName.toUpperCase() + "' AND c.TABLE_NAME = '" + tableName.toUpperCase() + "' " +
+                      "WHERE c.OWNER = USER AND c.TABLE_NAME = '" + tableName.toUpperCase() + "' " +
                       "AND c.CONSTRAINT_TYPE = 'P' AND c.OWNER = cc.OWNER AND c.TABLE_NAME = cc.TABLE_NAME " +
                       "AND c.CONSTRAINT_NAME = cc.CONSTRAINT_NAME) THEN 'PRI' ELSE '' END AS COLUMN_KEY " +
                       "FROM ALL_TAB_COLUMNS a " +
                       "LEFT JOIN ALL_COL_COMMENTS b ON a.OWNER = b.OWNER AND a.TABLE_NAME = b.TABLE_NAME AND a.COLUMN_NAME = b.COLUMN_NAME " +
-                      "WHERE a.OWNER = '" + dbName.toUpperCase() + "' AND a.TABLE_NAME = '" + tableName.toUpperCase() + "' " +
+                      "WHERE a.OWNER = USER AND a.TABLE_NAME = '" + tableName.toUpperCase() + "' " +
                       "ORDER BY a.COLUMN_ID";
             } else {
                 // MySQL 查询
