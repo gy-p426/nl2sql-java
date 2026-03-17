@@ -65,18 +65,6 @@ nl2sql:
         maximum-pool-size: 10
         minimum-idle: 5
         connection-timeout: 30000
-    - name: FREEPDB1
-      host: 192.168.1.111
-      port: 1521
-      username: NL2SQL
-      password: root
-      db-type: oracle
-      databases:
-        - ORCL
-      pool:
-        maximum-pool-size: 10
-        minimum-idle: 5
-        connection-timeout: 30000
   
   # 火山引擎配置（保留兼容性）
   volcano-engine:
