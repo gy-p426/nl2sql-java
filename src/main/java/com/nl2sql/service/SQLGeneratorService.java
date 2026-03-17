@@ -29,6 +29,7 @@ public class SQLGeneratorService {
     private final VolcanoEngineClient volcanoEngineClient;
     private final TrainingDataRepository trainingDataRepository;
     private final DatabaseService databaseService;
+    private final DatabaseAccessScopeService databaseAccessScopeService;
     private final LLMRouter llmRouter;
     private final com.nl2sql.repository.DatabaseHostConfigRepository databaseHostConfigRepository;
 
@@ -64,7 +65,7 @@ public class SQLGeneratorService {
             }
             
             // 检索相关历史数据
-            List<TrainingPair> relevantPairs = retrieveRelevantTrainingData(question, keywords, 5);
+            List<TrainingPair> relevantPairs = retrieveRelevantTrainingData(question, keywords, 5, userId, candidateTables);
             log.info("🔍 检索到 {} 个相关历史示例", relevantPairs.size());
             
             // 构建提示词
@@ -918,11 +919,24 @@ public class SQLGeneratorService {
     private List<TrainingPair> retrieveRelevantTrainingData(
             String question,
             Map<String, List<String>> keywords,
-            int topN) {
+            int topN,
+            Integer userId,
+            List<String> candidateTables) {
         
         try {
-            // 从数据库读取所有训练数据
-            List<TrainingData> trainingDataList = trainingDataRepository.findAll();
+            List<TrainingData> trainingDataList;
+
+            List<String> scopedDatabases = resolveTrainingDataDatabases(userId, candidateTables);
+            if (!scopedDatabases.isEmpty()) {
+                trainingDataList = trainingDataRepository.findByDatabaseNameIn(scopedDatabases);
+                log.debug("🎯 训练数据按数据库范围过滤: {}", scopedDatabases);
+            } else if (userId == null) {
+                // 兼容旧调用：未传 userId 时保留全量检索行为
+                trainingDataList = trainingDataRepository.findAll();
+            } else {
+                log.info("📭 用户 {} 无可用数据库作用域，跳过训练数据注入", userId);
+                return Collections.emptyList();
+            }
             
             if (trainingDataList.isEmpty()) {
                 log.debug("数据库中没有训练数据");
@@ -941,6 +955,58 @@ public class SQLGeneratorService {
             log.error("❌ 检索历史数据时发生错误: {}", e.getMessage());
             return Collections.emptyList();
         }
+    }
+
+    private List<String> resolveTrainingDataDatabases(Integer userId, List<String> candidateTables) {
+        LinkedHashSet<String> scoped = new LinkedHashSet<>();
+
+        if (userId != null) {
+            scoped.addAll(databaseAccessScopeService.getAllowedDatabases(userId).stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(db -> !db.isEmpty())
+                .collect(Collectors.toList()));
+        }
+
+        Set<String> candidateDatabases = extractDatabasesFromCandidateTables(candidateTables);
+        if (!candidateDatabases.isEmpty()) {
+            if (scoped.isEmpty()) {
+                scoped.addAll(candidateDatabases);
+            } else {
+                scoped.retainAll(candidateDatabases);
+            }
+        }
+
+        return new ArrayList<>(scoped);
+    }
+
+    private Set<String> extractDatabasesFromCandidateTables(List<String> candidateTables) {
+        if (candidateTables == null || candidateTables.isEmpty()) {
+            return Collections.emptySet();
+        }
+
+        Set<String> databases = new LinkedHashSet<>();
+        for (String candidate : candidateTables) {
+            if (candidate == null || candidate.isBlank()) {
+                continue;
+            }
+
+            String tablePart = candidate;
+            int scoreSep = candidate.indexOf("||");
+            if (scoreSep > 0) {
+                tablePart = candidate.substring(0, scoreSep);
+            }
+
+            int dotIndex = tablePart.indexOf('.');
+            if (dotIndex > 0) {
+                String dbName = tablePart.substring(0, dotIndex).trim();
+                if (!dbName.isEmpty()) {
+                    databases.add(dbName);
+                }
+            }
+        }
+
+        return databases;
     }
 
     /**

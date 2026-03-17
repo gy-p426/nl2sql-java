@@ -68,7 +68,7 @@ nl2sql:
     - name: FREEPDB1
       host: 192.168.1.111
       port: 1521
-      username: system
+      username: NL2SQL
       password: root
       db-type: oracle
       databases:

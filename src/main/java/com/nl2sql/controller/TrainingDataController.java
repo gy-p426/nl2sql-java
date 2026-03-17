@@ -9,7 +9,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -28,12 +27,17 @@ public class TrainingDataController {
     @GetMapping
     @Operation(summary = "获取训练数据列表")
     public ApiResponse<Map<String, Object>> getTrainingData(
+            @RequestParam Integer userId,
             @RequestParam(required = false) String search,
             @RequestParam(required = false) String database,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "50") int pageSize) {
         try {
-            Map<String, Object> result = trainingDataService.getTrainingData(search, database, page, pageSize);
+            if (userId == null) {
+                return ApiResponse.error("用户账号信息不能为空");
+            }
+
+            Map<String, Object> result = trainingDataService.getTrainingData(userId, search, database, page, pageSize);
             return ApiResponse.success("获取训练数据成功", result);
         } catch (Exception e) {
             log.error("❌ 获取训练数据错误: {}", e.getMessage());
@@ -43,8 +47,14 @@ public class TrainingDataController {
 
     @PostMapping
     @Operation(summary = "新增训练数据")
-    public ApiResponse<Map<String, Object>> addTrainingData(@RequestBody Map<String, String> request) {
+    public ApiResponse<Map<String, Object>> addTrainingData(
+            @RequestParam Integer userId,
+            @RequestBody Map<String, String> request) {
         try {
+            if (userId == null) {
+                return ApiResponse.error("用户账号信息不能为空");
+            }
+
             String question = request.get("question");
             String sql = request.get("sql");
             String database = request.get("database");
@@ -57,7 +67,7 @@ public class TrainingDataController {
                 return ApiResponse.error("SQL不能为空");
             }
             
-            Map<String, Object> result = trainingDataService.addTrainingData(question, sql, database, description);
+            Map<String, Object> result = trainingDataService.addTrainingData(userId, question, sql, database, description);
             return ApiResponse.success("新增成功", result);
         } catch (Exception e) {
             log.error("❌ 新增训练数据错误: {}", e.getMessage());
@@ -67,8 +77,14 @@ public class TrainingDataController {
 
     @PostMapping("/batch")
     @Operation(summary = "批量新增训练数据")
-    public ApiResponse<Map<String, Object>> addTrainingDataBatch(@RequestBody Map<String, Object> request) {
+    public ApiResponse<Map<String, Object>> addTrainingDataBatch(
+            @RequestParam Integer userId,
+            @RequestBody Map<String, Object> request) {
         try {
+            if (userId == null) {
+                return ApiResponse.error("用户账号信息不能为空");
+            }
+
             @SuppressWarnings("unchecked")
             List<Map<String, String>> dataList = (List<Map<String, String>>) request.get("data");
             
@@ -76,7 +92,7 @@ public class TrainingDataController {
                 return ApiResponse.error("数据列表不能为空");
             }
             
-            Map<String, Object> result = trainingDataService.addTrainingDataBatch(dataList);
+            Map<String, Object> result = trainingDataService.addTrainingDataBatch(userId, dataList);
             return ApiResponse.success("批量新增成功", result);
         } catch (Exception e) {
             log.error("❌ 批量新增训练数据错误: {}", e.getMessage());
@@ -87,14 +103,19 @@ public class TrainingDataController {
     @PostMapping("/upload")
     @Operation(summary = "上传文件批量导入训练数据")
     public ApiResponse<Map<String, Object>> uploadTrainingData(
+            @RequestParam Integer userId,
             @RequestParam("file") MultipartFile file,
             @RequestParam(required = false) String database) {
         try {
+            if (userId == null) {
+                return ApiResponse.error("用户账号信息不能为空");
+            }
+
             if (file.isEmpty()) {
                 return ApiResponse.error("文件不能为空");
             }
             
-            Map<String, Object> result = trainingDataService.uploadTrainingData(file, database);
+            Map<String, Object> result = trainingDataService.uploadTrainingData(userId, file, database);
             return ApiResponse.success("上传成功", result);
         } catch (Exception e) {
             log.error("❌ 上传训练数据错误: {}", e.getMessage());
@@ -105,15 +126,20 @@ public class TrainingDataController {
     @PutMapping("/{id}")
     @Operation(summary = "修改训练数据")
     public ApiResponse<Map<String, Object>> updateTrainingData(
+            @RequestParam Integer userId,
             @PathVariable int id,
             @RequestBody Map<String, String> request) {
         try {
+            if (userId == null) {
+                return ApiResponse.error("用户账号信息不能为空");
+            }
+
             String question = request.get("question");
             String sql = request.get("sql");
             String database = request.get("database");
             String description = request.get("description");
             
-            Map<String, Object> result = trainingDataService.updateTrainingData(id, question, sql, database, description);
+            Map<String, Object> result = trainingDataService.updateTrainingData(userId, id, question, sql, database, description);
             
             if ((Boolean) result.getOrDefault("success", false)) {
                 return ApiResponse.success("修改成功", result);
@@ -128,9 +154,15 @@ public class TrainingDataController {
 
     @DeleteMapping("/{id}")
     @Operation(summary = "删除训练数据")
-    public ApiResponse<Map<String, Object>> deleteTrainingData(@PathVariable int id) {
+    public ApiResponse<Map<String, Object>> deleteTrainingData(
+            @RequestParam Integer userId,
+            @PathVariable int id) {
         try {
-            Map<String, Object> result = trainingDataService.deleteTrainingData(id);
+            if (userId == null) {
+                return ApiResponse.error("用户账号信息不能为空");
+            }
+
+            Map<String, Object> result = trainingDataService.deleteTrainingData(userId, id);
             
             if ((Boolean) result.getOrDefault("success", false)) {
                 return ApiResponse.success("删除成功", result);
