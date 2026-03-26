@@ -140,12 +140,15 @@ public class ConfigController {
             String password = (String) request.get("password");
             @SuppressWarnings("unchecked")
             java.util.List<String> databases = (java.util.List<String>) request.get("databases");
+            String dbType = (String) request.getOrDefault("dbType", "mysql");
+            String sid = (String) request.getOrDefault("sid", "ORCL");
+            String pdbName = (String) request.get("pdbName");
             
             if (userId == null || section == null || host == null || user == null || password == null) {
                 return ApiResponse.error("缺少必要参数");
             }
             
-            Map<String, Object> result = configService.addOrUpdateDatabaseHost(userId, section, host, user, password, databases);
+            Map<String, Object> result = configService.addOrUpdateDatabaseHost(userId, section, host, user, password, databases, dbType, sid, pdbName);
             return ApiResponse.success("保存成功", result);
         } catch (Exception e) {
             log.error("❌ 添加/更新数据库主机配置错误: {}", e.getMessage());
@@ -156,8 +159,14 @@ public class ConfigController {
     @DeleteMapping("/database-hosts/{section}")
     @Operation(summary = "删除数据库主机配置")
     public ApiResponse<Map<String, Object>> deleteDatabaseHost(@PathVariable String section,
-                                                               @RequestParam Integer userId) {
+                                                               @RequestBody Map<String, Object> request) {
         try {
+            Integer userId = request.containsKey("userId") ? ((Number) request.get("userId")).intValue() : null;
+            
+            if (userId == null) {
+                return ApiResponse.error("用户账号信息不能为空");
+            }
+            
             Map<String, Object> result = configService.deleteDatabaseHost(userId, section);
             
             if ((Boolean) result.getOrDefault("success", false)) {
@@ -202,8 +211,14 @@ public class ConfigController {
     public ApiResponse<Map<String, Object>> removeDatabaseFromHost(
             @PathVariable String section,
             @PathVariable String databaseKey,
-            @RequestParam Integer userId) {
+            @RequestBody Map<String, Object> request) {
         try {
+            Integer userId = request.containsKey("userId") ? ((Number) request.get("userId")).intValue() : null;
+            
+            if (userId == null) {
+                return ApiResponse.error("用户账号信息不能为空");
+            }
+            
             Map<String, Object> result = configService.removeDatabaseFromHost(userId, section, databaseKey);
             
             if ((Boolean) result.getOrDefault("success", false)) {
@@ -224,12 +239,15 @@ public class ConfigController {
             String host = request.get("host");
             String user = request.get("user");
             String password = request.get("password");
+            String dbType = request.getOrDefault("dbType", "mysql");
+            String sid = request.getOrDefault("sid", "ORCL");
+            String pdbName = request.get("pdbName");
             
             if (host == null || user == null || password == null) {
                 return ApiResponse.error("缺少必要参数");
             }
             
-            Map<String, Object> result = configService.testNewConnection(host, user, password);
+            Map<String, Object> result = configService.testNewConnection(host, user, password, dbType, sid, pdbName);
             
             if ((Boolean) result.getOrDefault("success", false)) {
                 return ApiResponse.success("连接成功", result);

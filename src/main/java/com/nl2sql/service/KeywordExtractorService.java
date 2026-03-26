@@ -262,18 +262,51 @@ public class KeywordExtractorService {
         try (Connection conn = databaseService.getConnection(dbName);
              Statement stmt = conn.createStatement()) {
             
-            // 获取表信息和列信息
-            String sql = String.format("""
-                SELECT 
-                    t.TABLE_NAME,
-                    t.TABLE_COMMENT,
-                    c.COLUMN_NAME,
-                    c.COLUMN_COMMENT
-                FROM INFORMATION_SCHEMA.TABLES t
-                LEFT JOIN INFORMATION_SCHEMA.COLUMNS c ON t.TABLE_NAME = c.TABLE_NAME AND t.TABLE_SCHEMA = c.TABLE_SCHEMA
-                WHERE t.TABLE_SCHEMA = '%s'
-                ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
-                """, dbName);
+            // 获取数据库类型
+            String dbType = databaseService.getDatabaseType(dbName);
+            
+            // 如果无法从配置中获取数据库类型，尝试从连接元数据中获取
+            if (dbType == null || "mysql".equals(dbType)) {
+                String productName = conn.getMetaData().getDatabaseProductName().toLowerCase();
+                if (productName.contains("oracle")) {
+                    dbType = "oracle";
+                    log.info("🔍 从连接元数据检测到数据库类型: oracle");
+                }
+            }
+            
+            // 根据数据库类型构建查询语句
+            String sql;
+            if ("oracle".equals(dbType)) {
+                // Oracle 查询 - 使用当前用户的表
+                sql = """
+                    SELECT 
+                        t.TABLE_NAME,
+                        tc.COMMENTS AS TABLE_COMMENT,
+                        c.COLUMN_NAME,
+                        cc.COMMENTS AS COLUMN_COMMENT
+                    FROM ALL_TABLES t
+                    LEFT JOIN ALL_TAB_COMMENTS tc ON t.OWNER = tc.OWNER AND t.TABLE_NAME = tc.TABLE_NAME
+                    LEFT JOIN ALL_TAB_COLUMNS c ON t.OWNER = c.OWNER AND t.TABLE_NAME = c.TABLE_NAME
+                    LEFT JOIN ALL_COL_COMMENTS cc ON c.OWNER = cc.OWNER AND c.TABLE_NAME = cc.TABLE_NAME AND c.COLUMN_NAME = cc.COLUMN_NAME
+                    WHERE t.OWNER = USER
+                    ORDER BY t.TABLE_NAME, c.COLUMN_ID
+                    """;
+            } else {
+                // MySQL 查询
+                sql = String.format("""
+                    SELECT 
+                        t.TABLE_NAME,
+                        t.TABLE_COMMENT,
+                        c.COLUMN_NAME,
+                        c.COLUMN_COMMENT
+                    FROM INFORMATION_SCHEMA.TABLES t
+                    LEFT JOIN INFORMATION_SCHEMA.COLUMNS c ON t.TABLE_NAME = c.TABLE_NAME AND t.TABLE_SCHEMA = c.TABLE_SCHEMA
+                    WHERE t.TABLE_SCHEMA = '%s'
+                    ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
+                    """, dbName);
+            }
+            
+            log.info("🔍 执行关键词提取SQL: {} (数据库类型: {})\n{}", dbName, dbType, sql);
             
             try (ResultSet rs = stmt.executeQuery(sql)) {
                 while (rs.next()) {
@@ -308,6 +341,9 @@ public class KeywordExtractorService {
         Map<String, List<String>> keywords = new HashMap<>();
         keywords.put("keywords_cn", new ArrayList<>(chineseKeywords));
         keywords.put("keywords_en", new ArrayList<>(englishKeywords));
+        
+        log.info("✅ 数据库 {} 关键词提取完成，中文关键词: {} 个, 英文关键词: {} 个", 
+            dbName, chineseKeywords.size(), englishKeywords.size());
         
         return keywords;
     }

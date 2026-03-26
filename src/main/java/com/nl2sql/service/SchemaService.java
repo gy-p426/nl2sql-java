@@ -138,30 +138,61 @@ public class SchemaService {
                 : databaseService.getConnection(ownerUserId, dbName);
              Connection targetConn = primaryDataSource.getConnection()) {
             
+            // 获取数据库类型
+            String dbType = databaseService.getDatabaseType(dbName);
+            
             // 获取主键信息
-            Map<String, List<String>> primaryKeys = getPrimaryKeysMap(sourceConn, dbName);
+            Map<String, List<String>> primaryKeys = getPrimaryKeysMap(sourceConn, dbName, dbType);
             
             // 获取表和列信息
-            String sql = String.format("""
-                SELECT 
-                    t.TABLE_NAME,
-                    t.TABLE_COMMENT,
-                    t.TABLE_ROWS,
-                    c.COLUMN_NAME,
-                    c.COLUMN_COMMENT,
-                    c.COLUMN_TYPE,
-                    c.DATA_TYPE,
-                    c.IS_NULLABLE,
-                    c.COLUMN_DEFAULT,
-                    c.COLUMN_KEY,
-                    c.ORDINAL_POSITION
-                FROM INFORMATION_SCHEMA.TABLES t
-                LEFT JOIN INFORMATION_SCHEMA.COLUMNS c 
-                    ON t.TABLE_NAME = c.TABLE_NAME 
-                    AND t.TABLE_SCHEMA = c.TABLE_SCHEMA
-                WHERE t.TABLE_SCHEMA = '%s'
-                ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
-                """, dbName);
+            String sql;
+            if ("oracle".equals(dbType)) {
+                // Oracle 查询 - 使用当前用户
+                sql = "SELECT " +
+                    "    t.TABLE_NAME, " +
+                    "    tc.COMMENTS AS TABLE_COMMENT, " +
+                    "    t.NUM_ROWS AS TABLE_ROWS, " +
+                    "    c.COLUMN_NAME, " +
+                    "    cc.COMMENTS AS COLUMN_COMMENT, " +
+                    "    c.DATA_TYPE AS COLUMN_TYPE, " +
+                    "    c.DATA_TYPE, " +
+                    "    c.NULLABLE AS IS_NULLABLE, " +
+                    "    c.DATA_DEFAULT AS COLUMN_DEFAULT, " +
+                    "    CASE WHEN c.COLUMN_NAME IN (SELECT COLUMN_NAME FROM ALL_CONSTRAINTS cons, ALL_CONS_COLUMNS cols " +
+                    "         WHERE cons.OWNER = USER AND cons.TABLE_NAME = t.TABLE_NAME " +
+                    "         AND cons.CONSTRAINT_TYPE = 'P' AND cons.OWNER = cols.OWNER " +
+                    "         AND cons.TABLE_NAME = cols.TABLE_NAME AND cons.CONSTRAINT_NAME = cols.CONSTRAINT_NAME) " +
+                    "    THEN 'PRI' ELSE '' END AS COLUMN_KEY, " +
+                    "    c.COLUMN_ID AS ORDINAL_POSITION " +
+                    "FROM ALL_TABLES t " +
+                    "LEFT JOIN ALL_TAB_COLUMNS c ON t.OWNER = c.OWNER AND t.TABLE_NAME = c.TABLE_NAME " +
+                    "LEFT JOIN ALL_TAB_COMMENTS tc ON t.OWNER = tc.OWNER AND t.TABLE_NAME = tc.TABLE_NAME " +
+                    "LEFT JOIN ALL_COL_COMMENTS cc ON c.OWNER = cc.OWNER AND c.TABLE_NAME = cc.TABLE_NAME AND c.COLUMN_NAME = cc.COLUMN_NAME " +
+                    "WHERE t.OWNER = USER " +
+                    "ORDER BY t.TABLE_NAME, c.COLUMN_ID";
+            } else {
+                // MySQL 查询
+                sql = String.format("""
+                    SELECT 
+                        t.TABLE_NAME,
+                        t.TABLE_COMMENT,
+                        t.TABLE_ROWS,
+                        c.COLUMN_NAME,
+                        c.COLUMN_COMMENT,
+                        c.COLUMN_TYPE,
+                        c.DATA_TYPE,
+                        c.IS_NULLABLE,
+                        c.COLUMN_DEFAULT,
+                        c.COLUMN_KEY,
+                        c.ORDINAL_POSITION
+                    FROM INFORMATION_SCHEMA.TABLES t
+                    LEFT JOIN INFORMATION_SCHEMA.COLUMNS c 
+                        ON t.TABLE_NAME = c.TABLE_NAME 
+                        AND t.TABLE_SCHEMA = c.TABLE_SCHEMA
+                    WHERE t.TABLE_SCHEMA = '%s'
+                    ORDER BY t.TABLE_NAME, c.ORDINAL_POSITION
+                    """, dbName);
+            }
             
             try (Statement stmt = sourceConn.createStatement();
                  ResultSet rs = stmt.executeQuery(sql)) {
@@ -402,10 +433,22 @@ public class SchemaService {
                 ? databaseService.getConnection(dbName)
                 : databaseService.getConnection(userId, dbName)) {
             
+            // 获取数据库类型
+            String dbType = databaseService.getDatabaseType(dbName);
+            
+            // 如果无法从配置中获取数据库类型，尝试从连接元数据中获取
+            if (dbType == null || "mysql".equals(dbType)) {
+                String productName = conn.getMetaData().getDatabaseProductName().toLowerCase();
+                if (productName.contains("oracle")) {
+                    dbType = "oracle";
+                    log.info("🔍 从连接元数据检测到数据库类型: oracle");
+                }
+            }
+            
             // 分别获取不同的信息，避免ResultSet冲突
-            Map<String, String> tableComments = getTableComments(conn, dbName);
-            Map<String, List<String>> primaryKeys = getPrimaryKeysMap(conn, dbName);
-            Map<String, List<String>> columnInfo = getColumnInfo(conn, dbName);
+            Map<String, String> tableComments = getTableComments(conn, dbName, dbType);
+            Map<String, List<String>> primaryKeys = getPrimaryKeysMap(conn, dbName, dbType);
+            Map<String, List<String>> columnInfo = getColumnInfo(conn, dbName, dbType);
             
             // 构建表信息字符串
             for (String tableName : tableComments.keySet()) {
@@ -441,6 +484,7 @@ public class SchemaService {
             
         } catch (Exception e) {
             System.err.println("❌ 构建表信息字符串时出错: " + e.getMessage());
+            log.error("❌ 构建表信息字符串时出错: {}", e.getMessage(), e);
         }
         
         return tableLines;
@@ -450,20 +494,35 @@ public class SchemaService {
      * 获取表注释信息
      */
     private Map<String, String> getTableComments(Connection conn, String dbName) throws Exception {
+        return getTableComments(conn, dbName, "mysql");
+    }
+    
+    private Map<String, String> getTableComments(Connection conn, String dbName, String dbType) throws Exception {
         Map<String, String> tableComments = new HashMap<>();
         
         try (Statement stmt = conn.createStatement()) {
-            String sql = String.format("""
-                SELECT TABLE_NAME, TABLE_COMMENT
-                FROM INFORMATION_SCHEMA.TABLES 
-                WHERE TABLE_SCHEMA = '%s'
-                """, dbName);
+            String sql;
+            if ("oracle".equals(dbType)) {
+                // Oracle 查询 - 使用当前用户
+                sql = "SELECT TABLE_NAME, COMMENTS AS TABLE_COMMENT FROM ALL_TAB_COMMENTS WHERE OWNER = USER";
+            } else {
+                // MySQL 查询
+                sql = String.format("""
+                    SELECT TABLE_NAME, TABLE_COMMENT
+                    FROM INFORMATION_SCHEMA.TABLES 
+                    WHERE TABLE_SCHEMA = '%s'
+                    """, dbName);
+            }
+            
+            log.info("🔍 执行表注释查询: {}", sql);
             
             ResultSet rs = stmt.executeQuery(sql);
             while (rs.next()) {
                 tableComments.put(rs.getString("TABLE_NAME"), rs.getString("TABLE_COMMENT"));
             }
         }
+        
+        log.info("✅ 获取到 {} 个表的注释信息", tableComments.size());
         
         return tableComments;
     }
@@ -472,20 +531,39 @@ public class SchemaService {
      * 获取主键信息 - 重载方法支持传入Connection
      */
     private Map<String, List<String>> getPrimaryKeysMap(Connection conn, String dbName) throws Exception {
+        return getPrimaryKeysMap(conn, dbName, "mysql");
+    }
+    
+    private Map<String, List<String>> getPrimaryKeysMap(Connection conn, String dbName, String dbType) throws Exception {
         Map<String, List<String>> primaryKeys = new HashMap<>();
         
         try (Statement stmt = conn.createStatement()) {
-            String sql = String.format("""
-                SELECT tc.TABLE_NAME, kcu.COLUMN_NAME
-                FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-                JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu 
-                    ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME 
-                    AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
-                    AND tc.TABLE_NAME = kcu.TABLE_NAME
-                WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' 
-                    AND tc.TABLE_SCHEMA = '%s'
-                ORDER BY tc.TABLE_NAME, kcu.ORDINAL_POSITION
-                """, dbName);
+            String sql;
+            if ("oracle".equals(dbType)) {
+                // Oracle 查询 - 使用当前用户
+                sql = "SELECT " +
+                      "    cons.TABLE_NAME, " +
+                      "    cols.COLUMN_NAME " +
+                      "FROM ALL_CONSTRAINTS cons " +
+                      "JOIN ALL_CONS_COLUMNS cols ON cons.OWNER = cols.OWNER AND cons.TABLE_NAME = cols.TABLE_NAME AND cons.CONSTRAINT_NAME = cols.CONSTRAINT_NAME " +
+                      "WHERE cons.OWNER = USER AND cons.CONSTRAINT_TYPE = 'P' " +
+                      "ORDER BY cons.TABLE_NAME, cols.POSITION";
+            } else {
+                // MySQL 查询
+                sql = String.format("""
+                    SELECT tc.TABLE_NAME, kcu.COLUMN_NAME
+                    FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
+                    JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu 
+                        ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME 
+                        AND tc.TABLE_SCHEMA = kcu.TABLE_SCHEMA
+                        AND tc.TABLE_NAME = kcu.TABLE_NAME
+                    WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY' 
+                        AND tc.TABLE_SCHEMA = '%s'
+                    ORDER BY tc.TABLE_NAME, kcu.ORDINAL_POSITION
+                    """, dbName);
+            }
+            
+            log.info("🔍 执行主键查询: {}", sql);
             
             ResultSet rs = stmt.executeQuery(sql);
             while (rs.next()) {
@@ -495,6 +573,8 @@ public class SchemaService {
             }
         }
         
+        log.info("✅ 获取到 {} 个表的主键信息", primaryKeys.size());
+        
         return primaryKeys;
     }
 
@@ -502,19 +582,40 @@ public class SchemaService {
      * 获取列信息
      */
     private Map<String, List<String>> getColumnInfo(Connection conn, String dbName) throws Exception {
+        return getColumnInfo(conn, dbName, "mysql");
+    }
+    
+    private Map<String, List<String>> getColumnInfo(Connection conn, String dbName, String dbType) throws Exception {
         Map<String, List<String>> columnInfo = new HashMap<>();
         
         try (Statement stmt = conn.createStatement()) {
-            String sql = String.format("""
-                SELECT 
-                    TABLE_NAME,
-                    COLUMN_NAME,
-                    COLUMN_COMMENT,
-                    COLUMN_TYPE
-                FROM INFORMATION_SCHEMA.COLUMNS 
-                WHERE TABLE_SCHEMA = '%s'
-                ORDER BY TABLE_NAME, ORDINAL_POSITION
-                """, dbName);
+            String sql;
+            if ("oracle".equals(dbType)) {
+                // Oracle 查询 - 使用当前用户和表别名
+                sql = "SELECT " +
+                      "    acc.TABLE_NAME, " +
+                      "    acc.COLUMN_NAME, " +
+                      "    acc.COMMENTS AS COLUMN_COMMENT, " +
+                      "    atc.DATA_TYPE AS COLUMN_TYPE " +
+                      "FROM ALL_COL_COMMENTS acc " +
+                      "JOIN ALL_TAB_COLUMNS atc ON acc.OWNER = atc.OWNER AND acc.TABLE_NAME = atc.TABLE_NAME AND acc.COLUMN_NAME = atc.COLUMN_NAME " +
+                      "WHERE acc.OWNER = USER " +
+                      "ORDER BY acc.TABLE_NAME, atc.COLUMN_ID";
+            } else {
+                // MySQL 查询
+                sql = String.format("""
+                    SELECT 
+                        TABLE_NAME,
+                        COLUMN_NAME,
+                        COLUMN_COMMENT,
+                        COLUMN_TYPE
+                    FROM INFORMATION_SCHEMA.COLUMNS 
+                    WHERE TABLE_SCHEMA = '%s'
+                    ORDER BY TABLE_NAME, ORDINAL_POSITION
+                    """, dbName);
+            }
+            
+            log.info("🔍 执行列信息查询: {}", sql);
             
             ResultSet rs = stmt.executeQuery(sql);
             while (rs.next()) {
@@ -539,6 +640,8 @@ public class SchemaService {
                 }
             }
         }
+        
+        log.info("✅ 获取到 {} 个表的列信息", columnInfo.size());
         
         return columnInfo;
     }

@@ -3,14 +3,16 @@
 ## Project at a glance
 - 本项目是 Spring Boot 3.2 / Java 21 的 NL2SQL 后端，包含 Excel 导入管理模块。 / Spring Boot 3.2 + Java 21 backend for NL2SQL with an Excel ingestion module.
 - 启动时扫描两个平级包：`com.nl2sql` 与 `com.excelmanage`（见 `src/main/java/com/nl2sql/NL2SQLApplication.java`）。 / Startup scans both `com.nl2sql` and `com.excelmanage`.
-- API 基础路径为 `/api`（见 `src/main/resources/application.yml`），主要控制器在 `/query`、`/config`、`/export`、`/excel-manage`。 / API base path is `/api` with controllers under those routes.
+- API 基础路径为 `/api`（见 `src/main/resources/application.yml`），核心控制器在 `/query`、`/config`、`/export`、`/excel-manage`，并有用户与运维相关路由如 `/users`、`/execute-sql`、`/migration`、`/session-cache`。 / API base path is `/api`; core routes plus user/ops routes are actively used.
 
 ## Architecture and data flow (important)
 - 核心查询链路为分阶段处理：选库 -> 关键词提取 -> 候选表 -> SQL 生成 -> SQL 执行（`src/main/java/com/nl2sql/service/NL2SQLService.java`）。 / Core query flow is staged end-to-end.
 - 流式查询使用 SSE，返回 step/status/timestamp 等进度字段，并异步执行（`src/main/java/com/nl2sql/controller/QueryController.java`，`src/main/java/com/nl2sql/service/StreamingService.java`）。 / Streaming uses SSE with structured progress payloads.
 - SQL 生成采用多模型并行、执行结果过滤、再由模型评估选优（`src/main/java/com/nl2sql/service/SQLGeneratorService.java`）。 / SQL generation is parallel + execution-filtered + model-evaluated.
 - 运行时数据库来自 `database_host_config`，通过动态连接池管理，不要写死目标库（`src/main/java/com/nl2sql/service/DatabasePoolService.java`）。 / Runtime DB targets are dynamic, not hardcoded.
+- 当前主链路已按用户作用域隔离：`database_host_config` / `database_overview` / `database_schema` 依赖 `owner_user_id + host_config_id`，访问控制集中在 `DatabaseAccessScopeService`，连接池 key 也包含 `u:...|h:...|d:...`（`src/main/java/com/nl2sql/service/DatabaseAccessScopeService.java`，`src/main/java/com/nl2sql/service/DatabasePoolService.java`）。 / Query/data access is now user-scoped, not global.
 - 启动阶段有 `CommandLineRunner` 初始化：YAML 配置同步入库、Schema/Overview 导出（`src/main/java/com/nl2sql/service/ConfigInitializationService.java`，`src/main/java/com/nl2sql/service/InitializationService.java`）。 / Startup initialization syncs config and metadata.
+- 启动时还会先执行一次性迁移（`@Order(0)`），按版本记录在 `startup_migration_history`，脚本位于 `src/main/resources/migration-*.sql`（`src/main/java/com/nl2sql/service/StartupMigrationService.java`）。 / Startup includes ordered one-time SQL migrations before normal init.
 
 ## Conventions this repo actually uses
 - REST 响应统一使用 `ApiResponse<T>`（`success/message/data/error`），新增接口保持一致（`src/main/java/com/nl2sql/model/dto/ApiResponse.java`）。 / Keep all REST responses wrapped in `ApiResponse<T>`.
@@ -18,16 +20,18 @@
 - 控制器广泛使用 OpenAPI 注解（`@Tag`、`@Operation`），新增接口遵循现有风格。 / Follow existing OpenAPI annotation style.
 - CORS 在全局配置里放开，同时很多控制器也重复声明。 / CORS is permissive globally and often repeated per controller.
 - `com.excelmanage` 按 controller/service/repository 分层，业务逻辑放 service（`src/main/java/com/excelmanage/README.md`）。 / Keep business logic in service layer for Excel module.
+- 用户上下文是当前接口约束的一部分：`/query`、`/config`、`/export`、`/execute-sql` 等接口普遍要求 `userId`，缺失时通常直接返回错误（如“用户账号信息不能为空”）。 / Many APIs now require `userId` explicitly.
 
 ## Integrations and external dependencies
 - LLM 按任务路由：`CONTINUOUS_QUESTION`、`DATABASE_SELECTION`、`KEYWORD_EXTRACTION`、`SQL_GENERATION`、`SQL_EVALUATION`，由 `LLMRouter` + `nl2sql.llm.*` 配置驱动。 / Task-based LLM routing is config-driven.
 - Volcano Engine 与 Ollama 共存，服务层内置提供方切换/降级逻辑（`src/main/java/com/nl2sql/service/DatabaseService.java`）。 / Volcano/Ollama coexist with fallback behavior.
 - 系统元数据与运行配置依赖 MySQL，参考结构文件：`src/main/resources/schema.sql`、`src/main/resources/schema-config.sql`。 / MySQL is required for metadata and runtime config.
+- 支持 Oracle 数据库连接和 SQL 生成，通过 `db_type` 配置指定数据库类型（`src/main/java/com/nl2sql/service/DatabasePoolService.java`）。 / Oracle database support is now available.
 - 导出接口会先移除 SQL 的 `LIMIT` 再执行全量导出，支持 CSV/Excel 流式输出（`src/main/java/com/nl2sql/service/ExportService.java`）。 / Export removes `LIMIT` before full export.
 
 ## Developer workflows (verified from files/docs)
 - 构建 JAR：`mvn clean package -DskipTests`（`Dockerfile` 也使用该命令）。 / Build with Maven skip-tests package command.
-- 运行测试：`mvn test`（当前测试覆盖较少，见 `src/test/java/com/nl2sql/NL2SQLApplicationTests.java`）。 / Test coverage is currently minimal.
+- 运行测试：`mvn test`（除 `NL2SQLApplicationTests` 外，已有针对权限与迁移的单测，如 `DatabaseServiceSqlDetectionTest`、`StartupMigrationServiceTest`、`UserServiceRoleTest`）。 / Test suite now includes focused unit tests for scope/role/migration behavior.
 - 本地运行 JAR：`java -jar target/nl2sql-service-1.0.0.jar`。 / Run the packaged JAR directly.
 - Docker 编排启动：`docker-compose up -d`（见 `docker-compose.yml`）。 / Start stack via docker-compose.
 
@@ -36,4 +40,8 @@
 - 查询质量依赖元数据表是否已初始化；出现选库/选表异常时先检查初始化链路。 / Metadata initialization strongly affects query quality.
 - `application.yml` 含默认样例密钥/占位值，修改敏感配置时优先走环境变量覆盖。 / Prefer env overrides for secrets/config-sensitive changes.
 - 流式响应字段结构（`step`、`status`、`timestamp` 及相关 payload）需保持稳定，前端流程文档依赖它（`query-stream 流程.md`）。 / Keep SSE payload shape stable for frontend compatibility.
+- Oracle 数据库配置：需要在 `application.yml` 中设置 `db-type: oracle`，并确保 Oracle JDBC 驱动已添加到依赖中。 / Oracle database configuration requires setting `db-type: oracle` in application.yml.
+- Oracle SQL 语法：Oracle 使用 `ROWNUM` 而不是 `LIMIT` 来限制结果数量，系统会自动处理这种差异。 / Oracle uses `ROWNUM` instead of `LIMIT` for result limiting.
+- SQL 自动识别数据库时，用户若可访问多个库且 SQL 未写库名前缀，会拒绝自动回退（返回空/报错）；多库场景应显式写 `db.table`（`src/main/java/com/nl2sql/service/DatabaseService.java`）。 / In multi-DB user scope, unqualified SQL is intentionally rejected.
+- 启动失败先看迁移：`StartupMigrationService` 会 fail-fast，脚本执行成功后写 `startup_migration_history`；排查时优先核对 `src/main/resources/migration-*.sql` 与 `/api/migration/history`（管理员）返回。 / Startup migration issues block boot by design.
 

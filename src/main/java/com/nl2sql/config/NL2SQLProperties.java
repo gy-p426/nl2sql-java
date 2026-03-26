@@ -30,6 +30,7 @@ public class NL2SQLProperties {
         private String password;
         private List<String> databases;
         private Pool pool;
+        private String dbType = "mysql"; // mysql, oracle
     }
 
     @Data

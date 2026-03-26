@@ -4,7 +4,7 @@ spring:
   
   # nl2sql数据库配置（用于存储系统数据）
   datasource:
-    url: jdbc:mysql://localhost:3306/nl2sql?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://192.168.1.106:3306/nl2sql?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
     password: root
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -57,7 +57,7 @@ nl2sql:
   # 数据库配置
   databases:
     - name: db1
-      host: localhost
+      host: 192.168.1.106
       port: 3306
       username: root
       password: root

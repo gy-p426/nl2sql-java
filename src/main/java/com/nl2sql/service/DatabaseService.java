@@ -115,15 +115,21 @@ public class DatabaseService {
         try (Connection conn = getConnection(dbName);
              Statement stmt = conn.createStatement()) {
             
-            // 添加LIMIT限制
+            // 添加限制 - 根据数据库类型
             String limitedSql = sql;
-            if (!sql.toUpperCase().contains("LIMIT")) {
-                // 去掉末尾的分号，然后添加LIMIT，最后加上分号
-                limitedSql = sql.trim();
-                if (limitedSql.endsWith(";")) {
-                    limitedSql = limitedSql.substring(0, limitedSql.length() - 1);
+            if (!sql.toUpperCase().contains("LIMIT") && !sql.toUpperCase().contains("ROWNUM")) {
+                String dbType = getDatabaseType(dbName);
+                if ("oracle".equals(dbType)) {
+                    // Oracle使用ROWNUM
+                    limitedSql = "SELECT * FROM (" + sql.trim().replaceAll(";\s*$", "") + ") WHERE ROWNUM <= " + limit + ";";
+                } else {
+                    // MySQL使用LIMIT
+                    limitedSql = sql.trim();
+                    if (limitedSql.endsWith(";")) {
+                        limitedSql = limitedSql.substring(0, limitedSql.length() - 1);
+                    }
+                    limitedSql = limitedSql + " LIMIT " + limit + ";";
                 }
-                limitedSql = limitedSql + " LIMIT " + limit + ";";
             }
             
             log.info("🔍 执行SQL: {}", limitedSql);
@@ -161,13 +167,21 @@ public class DatabaseService {
         try (Connection conn = getConnection(userId, dbName);
              Statement stmt = conn.createStatement()) {
 
+            // 添加限制 - 根据数据库类型
             String limitedSql = sql;
-            if (!sql.toUpperCase().contains("LIMIT")) {
-                limitedSql = sql.trim();
-                if (limitedSql.endsWith(";")) {
-                    limitedSql = limitedSql.substring(0, limitedSql.length() - 1);
+            if (!sql.toUpperCase().contains("LIMIT") && !sql.toUpperCase().contains("ROWNUM")) {
+                String dbType = getDatabaseType(dbName);
+                if ("oracle".equals(dbType)) {
+                    // Oracle使用ROWNUM
+                    limitedSql = "SELECT * FROM (" + sql.trim().replaceAll(";\s*$", "") + ") WHERE ROWNUM <= " + limit + ";";
+                } else {
+                    // MySQL使用LIMIT
+                    limitedSql = sql.trim();
+                    if (limitedSql.endsWith(";")) {
+                        limitedSql = limitedSql.substring(0, limitedSql.length() - 1);
+                    }
+                    limitedSql = limitedSql + " LIMIT " + limit + ";";
                 }
-                limitedSql = limitedSql + " LIMIT " + limit + ";";
             }
 
             log.info("🔍 [user={}] 执行SQL: {}", userId, limitedSql);
@@ -248,6 +262,27 @@ public class DatabaseService {
     }
 
     /**
+     * 获取数据库类型
+     */
+    public String getDatabaseType(String dbName) {
+        try {
+            List<DatabaseHostConfig> hostConfigs = databaseHostConfigRepository.findByIsActiveTrue();
+            for (DatabaseHostConfig hostConfig : hostConfigs) {
+                List<String> databases = objectMapper.readValue(
+                    hostConfig.getDatabases(), 
+                    new TypeReference<List<String>>() {}
+                );
+                if (databases.contains(dbName)) {
+                    return hostConfig.getDbType() != null ? hostConfig.getDbType() : "mysql";
+                }
+            }
+        } catch (Exception e) {
+            log.error("❌ 获取数据库类型失败: {}", e.getMessage());
+        }
+        return "mysql"; // 默认返回mysql
+    }
+
+    /**
      * 智能选择数据库 - 完全按照Python实现
      */
     public List<String> selectDatabases(String question) {
@@ -283,7 +318,6 @@ public class DatabaseService {
                 重要提示：
                 - "数据库名："后面的内容才是真正的数据库名
                 - "表名表注释："后面的内容是该数据库包含的表信息，不是数据库名
-                - 员工信息只保存在yibin2数据库中，若问题中涉及到员工信息，请一定包含yibin2数据库
                 
                 [选择规则]
                 1. 仔细分析用户问题涉及的业务领域和数据需求

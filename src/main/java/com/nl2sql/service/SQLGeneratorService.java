@@ -29,7 +29,9 @@ public class SQLGeneratorService {
     private final VolcanoEngineClient volcanoEngineClient;
     private final TrainingDataRepository trainingDataRepository;
     private final DatabaseService databaseService;
+    private final DatabaseAccessScopeService databaseAccessScopeService;
     private final LLMRouter llmRouter;
+    private final com.nl2sql.repository.DatabaseHostConfigRepository databaseHostConfigRepository;
 
     /**
      * 生成 SQL - 使用多模型并行生成
@@ -63,7 +65,7 @@ public class SQLGeneratorService {
             }
             
             // 检索相关历史数据
-            List<TrainingPair> relevantPairs = retrieveRelevantTrainingData(question, keywords, 5);
+            List<TrainingPair> relevantPairs = retrieveRelevantTrainingData(question, keywords, 5, userId, candidateTables);
             log.info("🔍 检索到 {} 个相关历史示例", relevantPairs.size());
             
             // 构建提示词
@@ -413,6 +415,22 @@ public class SQLGeneratorService {
         StringBuilder prompt = new StringBuilder();
         prompt.append("你是一个SQL专家。请根据用户问题和候选表结构，从以下几个SQL中选择最合适的一个。\n\n");
         
+        // 检测数据库类型
+        String dbType = "mysql"; // 默认
+        if (!candidateTables.isEmpty()) {
+            String firstTable = candidateTables.get(0);
+            if (firstTable.contains("||")) {
+                String dbName = firstTable.split("\\|\\|")[0];
+                if (dbName.contains(".")) {
+                    dbName = dbName.split("\\.")[0];
+                }
+                dbType = getDatabaseType(dbName);
+            }
+        }
+        
+        prompt.append("【数据库类型】\n");
+        prompt.append("当前数据库类型: " + dbType + "\n\n");
+        
         prompt.append("【用户问题】\n");
         prompt.append(question).append("\n\n");
         
@@ -520,6 +538,19 @@ public class SQLGeneratorService {
             List<String> candidateTables,
             List<TrainingPair> relevantPairs) {
         
+        // 检测数据库类型
+        String dbType = "mysql"; // 默认
+        if (!candidateTables.isEmpty()) {
+            String firstTable = candidateTables.get(0);
+            if (firstTable.contains("||")) {
+                String dbName = firstTable.split("\\|\\|")[0];
+                if (dbName.contains(".")) {
+                    dbName = dbName.split("\\.")[0];
+                }
+                dbType = getDatabaseType(dbName);
+            }
+        }
+        
         // 获取当前时间信息
         LocalDateTime now = LocalDateTime.now();
         String currentTimeInfo = String.format("""
@@ -605,23 +636,31 @@ public class SQLGeneratorService {
             【可用的数据库表结构】
             %s
             
+            【数据库类型】
+            当前数据库类型: %s
+            
             【SQL生成规则】
             1. 优先参考【历史训练数据】中的SQL模式
             2. 必须使用上面提供的真实表名和列名（表名格式：数据库名.表名）
             3. 生成1个高质量SQL方案，用```sql```包围
             4. 同时生成markdown格式的sql的描述，用```解释```包围，并且描述中不要包含sql语句或sql片段，只用中纯文进行解释
-            4. 列名使用中文别名
-            5. 注意有的表中有软删除条件（deleted = 0），有的表中没有软删除条件
-            6. ⚠️ 如果问题涉及时间（如"今年"、"本月"、"上个月"等），请参考【当前时间信息】生成准确的时间条件
-            7. ⚠️ 如果用户问题指定返回的列数，请你严格按照指定的列生成sql
-            8. ⚠️ 如果用户问题指定返回的列名，请你严格按照指定的列名生成sql，如问题为“获取2025年8月每天的历史出车次数的日期、出车次数，共2列数据”，生成sql的列名一定为“日期、出车次数”
+            5. 列名使用中文别名
+            6. 注意有的表中有软删除条件（deleted = 0），有的表中没有软删除条件
+            7. ⚠️ 如果问题涉及时间（如"今年"、"本月"、"上个月"等），请参考【当前时间信息】生成准确的时间条件
+            8. ⚠️ 如果用户问题指定返回的列数，请你严格按照指定的列生成sql
+            9. ⚠️ 如果用户问题指定返回的列名，请你严格按照指定的列名生成sql，如问题为“获取2025年8月每天的历史出车次数的日期、出车次数，共2列数据”，生成sql的列名一定为“日期、出车次数”
+            10. ⚠️ 根据数据库类型使用正确的SQL语法：
+                - MySQL: 使用 LIMIT 子句限制结果数量
+                - Oracle: 使用 ROWNUM 限制结果数量，如 "SELECT * FROM (SELECT * FROM table) WHERE ROWNUM <= 10"
+            11. ⚠️ 对于Oracle数据库，CASE语句的所有分支必须返回相同的数据类型。如果WHEN分支返回字符串，ELSE分支也必须返回字符串，可以使用TO_CHAR函数转换数值类型为字符串。
             
             请基于以上信息生成SQL：
             """,
             currentTimeInfo,
             historyExamples.toString(),
             question,
-            tablesInfo.toString()
+            tablesInfo.toString(),
+            dbType
         );
     }
 
@@ -752,13 +791,7 @@ public class SQLGeneratorService {
         Map<String, Object> result = new HashMap<>();
 
         try {
-            // 1. 添加LIMIT限制
-            if (!sql.toUpperCase().contains("LIMIT")) {
-                sql = sql.replaceAll(";\\s*$", "") + " LIMIT " + limit;
-                log.debug("🔧 添加LIMIT限制: {}", limit);
-            }
-
-            // 2. 检测涉及的数据库
+            // 1. 检测涉及的数据库
             List<String> databases = detectDatabasesInSql(sql, userId);
             log.debug("🎯 检测到数据库: {}", databases);
 
@@ -771,9 +804,24 @@ public class SQLGeneratorService {
                 return result;
             }
 
-            // 3. 使用第一个数据库的连接执行SQL
+            // 2. 使用第一个数据库的连接执行SQL
             String dbName = databases.get(0);
             log.info("💾 使用数据库 {} 执行SQL", dbName);
+
+            // 3. 添加限制 - 根据数据库类型
+            if (!sql.toUpperCase().contains("LIMIT") && !sql.toUpperCase().contains("ROWNUM")) {
+                // 尝试获取数据库类型
+                String dbType = getDatabaseType(dbName);
+                if ("oracle".equals(dbType)) {
+                    // Oracle使用ROWNUM
+                    sql = "SELECT * FROM (" + sql.replaceAll(";\s*$", "") + ") WHERE ROWNUM <= " + limit;
+                    log.debug("🔧 添加ROWNUM限制: {}", limit);
+                } else {
+                    // MySQL使用LIMIT
+                    sql = sql.replaceAll(";\s*$", "") + " LIMIT " + limit;
+                    log.debug("🔧 添加LIMIT限制: {}", limit);
+                }
+            }
 
             try (Connection conn = userId != null
                     ? databaseService.getConnection(userId, dbName)
@@ -871,11 +919,24 @@ public class SQLGeneratorService {
     private List<TrainingPair> retrieveRelevantTrainingData(
             String question,
             Map<String, List<String>> keywords,
-            int topN) {
+            int topN,
+            Integer userId,
+            List<String> candidateTables) {
         
         try {
-            // 从数据库读取所有训练数据
-            List<TrainingData> trainingDataList = trainingDataRepository.findAll();
+            List<TrainingData> trainingDataList;
+
+            List<String> scopedDatabases = resolveTrainingDataDatabases(userId, candidateTables);
+            if (!scopedDatabases.isEmpty()) {
+                trainingDataList = trainingDataRepository.findByDatabaseNameIn(scopedDatabases);
+                log.debug("🎯 训练数据按数据库范围过滤: {}", scopedDatabases);
+            } else if (userId == null) {
+                // 兼容旧调用：未传 userId 时保留全量检索行为
+                trainingDataList = trainingDataRepository.findAll();
+            } else {
+                log.info("📭 用户 {} 无可用数据库作用域，跳过训练数据注入", userId);
+                return Collections.emptyList();
+            }
             
             if (trainingDataList.isEmpty()) {
                 log.debug("数据库中没有训练数据");
@@ -894,6 +955,58 @@ public class SQLGeneratorService {
             log.error("❌ 检索历史数据时发生错误: {}", e.getMessage());
             return Collections.emptyList();
         }
+    }
+
+    private List<String> resolveTrainingDataDatabases(Integer userId, List<String> candidateTables) {
+        LinkedHashSet<String> scoped = new LinkedHashSet<>();
+
+        if (userId != null) {
+            scoped.addAll(databaseAccessScopeService.getAllowedDatabases(userId).stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(db -> !db.isEmpty())
+                .collect(Collectors.toList()));
+        }
+
+        Set<String> candidateDatabases = extractDatabasesFromCandidateTables(candidateTables);
+        if (!candidateDatabases.isEmpty()) {
+            if (scoped.isEmpty()) {
+                scoped.addAll(candidateDatabases);
+            } else {
+                scoped.retainAll(candidateDatabases);
+            }
+        }
+
+        return new ArrayList<>(scoped);
+    }
+
+    private Set<String> extractDatabasesFromCandidateTables(List<String> candidateTables) {
+        if (candidateTables == null || candidateTables.isEmpty()) {
+            return Collections.emptySet();
+        }
+
+        Set<String> databases = new LinkedHashSet<>();
+        for (String candidate : candidateTables) {
+            if (candidate == null || candidate.isBlank()) {
+                continue;
+            }
+
+            String tablePart = candidate;
+            int scoreSep = candidate.indexOf("||");
+            if (scoreSep > 0) {
+                tablePart = candidate.substring(0, scoreSep);
+            }
+
+            int dotIndex = tablePart.indexOf('.');
+            if (dotIndex > 0) {
+                String dbName = tablePart.substring(0, dotIndex).trim();
+                if (!dbName.isEmpty()) {
+                    databases.add(dbName);
+                }
+            }
+        }
+
+        return databases;
     }
 
     /**
@@ -977,6 +1090,29 @@ public class SQLGeneratorService {
     private String getChineseWeekday(int dayOfWeek) {
         String[] weekdays = {"一", "二", "三", "四", "五", "六", "日"};
         return weekdays[dayOfWeek - 1];
+    }
+
+    /**
+     * 获取数据库类型
+     */
+    private String getDatabaseType(String dbName) {
+        try {
+            // 从数据库主机配置中获取数据库类型
+            List<com.nl2sql.model.entity.DatabaseHostConfig> hostConfigs = databaseHostConfigRepository.findByIsActiveTrue();
+            
+            for (com.nl2sql.model.entity.DatabaseHostConfig hostConfig : hostConfigs) {
+                List<String> databases = new com.fasterxml.jackson.databind.ObjectMapper().readValue(
+                    hostConfig.getDatabases(), 
+                    new com.fasterxml.jackson.core.type.TypeReference<List<String>>() {}
+                );
+                if (databases.contains(dbName)) {
+                    return hostConfig.getDbType() != null ? hostConfig.getDbType() : "mysql";
+                }
+            }
+        } catch (Exception e) {
+            log.error("❌ 获取数据库类型失败: {}", e.getMessage());
+        }
+        return "mysql"; // 默认返回mysql
     }
 
     // 内部类

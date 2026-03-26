@@ -112,25 +112,49 @@ public class DatabasePoolService {
                 }
             }
             
-            // 构建 JDBC URL - 如果 host 已经包含端口号，就不再添加
+            // 构建 JDBC URL - 根据数据库类型
             String jdbcUrl;
+            String driverClassName;
             if (host == null || host.isBlank()) {
                 throw new IllegalArgumentException("数据库主机地址不能为空");
             }
 
-            if (host.contains(":")) {
-                jdbcUrl = String.format("jdbc:mysql://%s/%s?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8",
-                    host, dbName);
-            } else {
-                jdbcUrl = String.format("jdbc:mysql://%s:%d/%s?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8",
-                    host, port, dbName);
+            String dbType = hostConfig.getDbType();
+            if (dbType == null) {
+                dbType = "mysql"; // 默认值
+            }
+
+            switch (dbType.toLowerCase()) {
+                case "oracle":
+                    // 对于Oracle，根据是否有PDB名称构建不同的连接URL
+                    if (hostConfig.getPdbName() != null && !hostConfig.getPdbName().isEmpty()) {
+                        // 使用PDB服务名连接方式
+                        jdbcUrl = String.format("jdbc:oracle:thin:@//%s:%d/%s", host, port, hostConfig.getPdbName());
+                    } else {
+                        // 使用传统SID连接方式
+                        String oracleSid = hostConfig.getSid() != null ? hostConfig.getSid() : "ORCL";
+                        jdbcUrl = String.format("jdbc:oracle:thin:@%s:%d:%s", host, port, oracleSid);
+                    }
+                    driverClassName = "oracle.jdbc.OracleDriver";
+                    break;
+                case "mysql":
+                default:
+                    if (host.contains(":")) {
+                        jdbcUrl = String.format("jdbc:mysql://%s/%s?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8",
+                            host, dbName);
+                    } else {
+                        jdbcUrl = String.format("jdbc:mysql://%s:%d/%s?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useUnicode=true&characterEncoding=UTF-8",
+                            host, port, dbName);
+                    }
+                    driverClassName = "com.mysql.cj.jdbc.Driver";
+                    break;
             }
             
             config.setJdbcUrl(jdbcUrl);
             log.info("📡 创建数据库连接: {}", jdbcUrl);
             config.setUsername(hostConfig.getUsername());
             config.setPassword(hostConfig.getPassword());
-            config.setDriverClassName("com.mysql.cj.jdbc.Driver");
+            config.setDriverClassName(driverClassName);
             
             // 连接池配置
             config.setMaximumPoolSize(hostConfig.getPoolMaxSize());

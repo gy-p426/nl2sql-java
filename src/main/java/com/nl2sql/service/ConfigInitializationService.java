@@ -66,6 +66,7 @@ public class ConfigInitializationService implements CommandLineRunner {
                     config.setUsername(host.getUsername());
                     config.setPassword(host.getPassword());
                     config.setDatabases(objectMapper.writeValueAsString(host.getDatabases()));
+                    config.setDbType(host.getDbType());
                     
                     if (host.getPool() != null) {
                         config.setPoolMaxSize(host.getPool().getMaximumPoolSize());
