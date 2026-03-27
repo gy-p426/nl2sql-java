@@ -4,6 +4,7 @@ import com.nl2sql.repository.DatabaseSchemaRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -17,7 +18,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 
 /**
- * Schema 管理服务 - 修复ResultSet关闭问题
+ * Schema 管理服务 - 支持向量嵌入语义检索提升找表正确率
  */
 @Service
 public class SchemaService {
@@ -32,6 +33,12 @@ public class SchemaService {
     
     @Autowired
     private DataSource primaryDataSource;
+
+    @Autowired
+    private EmbeddingService embeddingService;
+
+    @Value("${nl2sql.embedding.score-weight:10.0}")
+    private double embeddingScoreWeight;
 
     /**
      * 导出所有数据库的 Schema - 基于 database_host_config 表
@@ -361,7 +368,7 @@ public class SchemaService {
     }
 
     /**
-     * 为单个数据库选择候选表 - 修复ResultSet关闭问题
+     * 为单个数据库选择候选表 - 集成向量嵌入语义检索
      */
     private List<String> selectTablesForDatabase(
             String dbName, 
@@ -374,7 +381,7 @@ public class SchemaService {
             List<String> tableLines = buildTableLinesDirectly(dbName, userId);
             
             if (tableLines.isEmpty()) {
-                System.out.println("⚠️ 数据库 " + dbName + " 的Schema数据不存在");
+                log.warn("⚠️ 数据库 {} 的Schema数据不存在", dbName);
                 return Collections.emptyList();
             }
             
@@ -382,11 +389,63 @@ public class SchemaService {
             Map<String, Double> tableScores = new HashMap<>();
             List<String> processedKeywords = preprocessKeywords(keywords);
             
+            // 构建查询文本用于向量检索（将关键词拼接为一段描述文本）
+            String queryText = String.join(" ", processedKeywords);
+            
+            // 获取查询文本的向量
+            double[] queryEmbedding = null;
+            Map<String, double[]> tableEmbeddingsMap = Collections.emptyMap();
+            if (embeddingService.isAvailable() && !queryText.isBlank()) {
+                queryEmbedding = embeddingService.getEmbedding(queryText);
+
+                // 批量获取所有表描述的向量
+                List<String> tableDescriptions = new ArrayList<>();
+                Map<String, String> tableLineToDesc = new LinkedHashMap<>();
+                for (String tableLine : tableLines) {
+                    String desc = buildTableDescription(tableLine);
+                    tableDescriptions.add(desc);
+                    tableLineToDesc.put(tableLine, desc);
+                }
+                tableEmbeddingsMap = embeddingService.getEmbeddings(tableDescriptions);
+
+                // 建立 tableLine -> embedding 映射
+                Map<String, double[]> lineEmbeddings = new HashMap<>();
+                for (Map.Entry<String, String> entry : tableLineToDesc.entrySet()) {
+                    double[] emb = tableEmbeddingsMap.get(entry.getValue());
+                    if (emb != null) {
+                        lineEmbeddings.put(entry.getKey(), emb);
+                    }
+                }
+                tableEmbeddingsMap = lineEmbeddings;
+            }
+            
             for (String tableLine : tableLines) {
-                double score = calculateTableScore(tableLine, processedKeywords);
+                // 关键词文本匹配得分
+                double keywordScore = calculateKeywordScore(tableLine, processedKeywords);
                 
-                if (score > 0) {
-                    tableScores.put(tableLine, score);
+                // 向量语义相似度得分
+                double vectorScore = 0.0;
+                if (queryEmbedding != null) {
+                    double[] tableEmb = tableEmbeddingsMap.get(tableLine);
+                    if (tableEmb != null) {
+                        double similarity = embeddingService.cosineSimilarity(queryEmbedding, tableEmb);
+                        // 余弦相似度范围 [-1, 1]，取正值部分乘以权重
+                        vectorScore = Math.max(0, similarity) * embeddingScoreWeight;
+                    }
+                }
+                
+                double totalScore = keywordScore + vectorScore;
+                if (totalScore > 0) {
+                    tableScores.put(tableLine, totalScore);
+                }
+                
+                if (vectorScore > 0) {
+                    // 提取表名（格式：dbName.tableName||...）
+                    int separatorIdx = tableLine.indexOf("||");
+                    String tableName = separatorIdx > 0 ? tableLine.substring(0, separatorIdx) : tableLine;
+                    log.debug("📊 表 {} - 关键词得分: {}, 向量得分: {}, 总分: {}",
+                            tableName, String.format("%.1f", keywordScore),
+                            String.format("%.1f", vectorScore), String.format("%.1f", totalScore));
                 }
             }
             
@@ -405,10 +464,10 @@ public class SchemaService {
             int targetCount;
             if (!highScorTables.isEmpty()) {
                 targetCount = Math.max(5, Math.min(10, highScorTables.size() / 4));
-                System.out.println("📊 数据库 " + dbName + " - 高分表(>15分): " + highScorTables.size() + "个, 返回: " + targetCount + "个");
+                log.info("📊 数据库 {} - 高分表(>15分): {}个, 返回: {}个", dbName, highScorTables.size(), targetCount);
             } else {
                 targetCount = Math.min(5, sortedTables.size());
-                System.out.println("📊 数据库 " + dbName + " - 无高分表，返回前" + targetCount + "个得分最高的表");
+                log.info("📊 数据库 {} - 无高分表，返回前{}个得分最高的表", dbName, targetCount);
             }
             
             return (highScorTables.isEmpty() ? sortedTables : highScorTables)
@@ -418,7 +477,7 @@ public class SchemaService {
                 .collect(Collectors.toList());
             
         } catch (Exception e) {
-            System.err.println("❌ 读取 Schema 数据错误: " + e.getMessage());
+            log.error("❌ 读取 Schema 数据错误: {}", e.getMessage());
             return Collections.emptyList();
         }
     }
@@ -677,9 +736,37 @@ public class SchemaService {
     }
 
     /**
-     * 计算表得分，后续可以加上向量相似度
+     * 构建表的文本描述用于向量嵌入
+     * 将表名、注释、列名和列注释组合成自然语言描述
      */
-    private double calculateTableScore(String tableLine, List<String> keywords) {
+    private String buildTableDescription(String tableLine) {
+        String[] parts = tableLine.split("\\|\\|");
+        StringBuilder desc = new StringBuilder();
+
+        // 表名（database.tableName）
+        if (parts.length > 0) {
+            desc.append(parts[0]);
+        }
+        // 表注释
+        if (parts.length > 1 && !"无注释".equals(parts[1])) {
+            desc.append(" ").append(parts[1]);
+        }
+        // 列名和列注释（跳过PK/FK字段，每对列名+注释）
+        // 格式: tableName||tableComment||PK:xxx||FK:||col1||comment1||type1||col2||comment2||type2
+        for (int i = 4; i < parts.length; i++) {
+            String part = parts[i].trim();
+            if (!part.isEmpty() && !part.startsWith("PK:") && !part.startsWith("FK:")) {
+                desc.append(" ").append(part);
+            }
+        }
+
+        return desc.toString();
+    }
+
+    /**
+     * 计算表的关键词文本匹配得分
+     */
+    private double calculateKeywordScore(String tableLine, List<String> keywords) {
         String[] parts = tableLine.split("\\|\\|");
         List<String> allFields = Arrays.asList(parts);
         
@@ -703,7 +790,6 @@ public class SchemaService {
                 }
             }
         }
-        //TODO：加入向量相似度得分
         
         return score;
     }

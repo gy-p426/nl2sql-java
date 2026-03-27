@@ -149,6 +149,16 @@ nl2sql:
         timeout: 60000
         enabled: true
   
+  # 向量嵌入模型配置（用于语义找表）
+  embedding:
+    enabled: true
+    base-url: https://ark.cn-beijing.volces.com/api/v3
+    api-key: ${VOLCANO_API_KEY:7d7ec6e7-1f52-4deb-b881-7ea57442399f}
+    model: doubao-embedding-large-text-250515
+    dimension: 256  # 支持 2048、1024、512、256，降维后L2归一化
+    # 向量得分在总分中的权重（相对于关键词得分）
+    score-weight: 10.0
+
   # 系统设置
   settings:
     refresh-db: true
